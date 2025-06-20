@@ -26,8 +26,6 @@ import {
   CircularProgress,
   Card,
   CardContent,
-  Fab,
-  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -325,6 +323,17 @@ const Expenditures: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Actions */}
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={() => handleOpenDialog()}
+        >
+          Create Expenditure
+        </Button>
+      </Box>
+
       {/* Expenditures Table */}
       <Paper sx={{ width: '100%', overflow: 'hidden' }}>
         <TableContainer>
@@ -484,18 +493,6 @@ const Expenditures: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
-
-      {/* Floating Action Button */}
-      <Tooltip title="Record New Expenditure">
-        <Fab
-          color="primary"
-          aria-label="add"
-          sx={{ position: 'fixed', bottom: 16, right: 16 }}
-          onClick={() => handleOpenDialog()}
-        >
-          <AddIcon />
-        </Fab>
-      </Tooltip>
     </Box>
   );
 };

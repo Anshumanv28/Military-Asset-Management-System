@@ -27,7 +27,6 @@ import {
   CircularProgress,
   Card,
   CardContent,
-  Fab,
   Tooltip,
 } from '@mui/material';
 import {
@@ -37,6 +36,8 @@ import {
   Visibility as ViewIcon,
   Search as SearchIcon,
   FilterList as FilterIcon,
+  CheckCircle as ApproveIcon,
+  Cancel as RejectIcon,
 } from '@mui/icons-material';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
@@ -56,6 +57,9 @@ interface Purchase {
   purchase_date: string;
   delivery_date?: string;
   purchase_order_number?: string;
+  status: 'pending' | 'approved' | 'cancelled';
+  approved_by?: string;
+  approved_at?: string;
   notes?: string;
   created_by: string;
   created_at: string;
@@ -114,6 +118,7 @@ const Purchases: React.FC = () => {
     asset_type_id: '',
     start_date: '',
     end_date: '',
+    status: '',
   });
 
   const { user } = useAuth();
@@ -162,6 +167,7 @@ const Purchases: React.FC = () => {
       if (filters.asset_type_id && purchase.asset_type_id !== filters.asset_type_id) return false;
       if (filters.start_date && purchase.purchase_date < filters.start_date) return false;
       if (filters.end_date && purchase.purchase_date > filters.end_date) return false;
+      if (filters.status && purchase.status !== filters.status) return false;
       return true;
     });
   }, [allPurchases, filters]);
@@ -233,12 +239,31 @@ const Purchases: React.FC = () => {
     }
   };
 
+  const handleApprove = async (id: string) => {
+    try {
+      await axios.put(`${process.env.REACT_APP_API_URL}/purchases/${id}/approve`);
+      await fetchAllPurchases();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to approve purchase');
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    try {
+      await axios.put(`${process.env.REACT_APP_API_URL}/purchases/${id}/cancel`);
+      await fetchAllPurchases();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to reject purchase');
+    }
+  };
+
   const handleClearFilters = () => {
     setFilters({
       base_id: '',
       asset_type_id: '',
       start_date: '',
       end_date: '',
+      status: '',
     });
     setPage(0);
   };
@@ -338,6 +363,21 @@ const Purchases: React.FC = () => {
                 InputLabelProps={{ shrink: true }}
               />
             </Grid>
+            <Grid item xs={12} sm={3}>
+              <FormControl fullWidth>
+                <InputLabel>Status</InputLabel>
+                <Select
+                  value={filters.status}
+                  label="Status"
+                  onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                >
+                  <MenuItem value="">All Statuses</MenuItem>
+                  <MenuItem value="pending">Pending</MenuItem>
+                  <MenuItem value="approved">Approved</MenuItem>
+                  <MenuItem value="cancelled">Cancelled</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
           </Grid>
           <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
             <Button variant="outlined" onClick={handleClearFilters}>
@@ -356,7 +396,6 @@ const Purchases: React.FC = () => {
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
-          disabled={user?.role === 'logistics_officer'}
         >
           New Purchase
         </Button>
@@ -376,6 +415,7 @@ const Purchases: React.FC = () => {
               <TableCell>Purchase Date</TableCell>
               <TableCell>Delivery Date</TableCell>
               <TableCell>PO Number</TableCell>
+              <TableCell>Status</TableCell>
               <TableCell>Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -394,17 +434,43 @@ const Purchases: React.FC = () => {
                 </TableCell>
                 <TableCell>{purchase.purchase_order_number}</TableCell>
                 <TableCell>
+                  {purchase.status === 'pending' && <Chip label="Pending" color="warning" size="small" />}
+                  {purchase.status === 'approved' && <Chip label="Approved" color="success" size="small" />}
+                  {purchase.status === 'cancelled' && <Chip label="Cancelled" color="error" size="small" />}
+                </TableCell>
+                <TableCell>
+                  {(user?.role === 'admin' || (user?.role === 'base_commander' && purchase.base_id === user.base_id)) && 
+                   purchase.status === 'pending' && (
+                    <>
+                      <Tooltip title="Approve Purchase">
+                        <IconButton
+                          size="small"
+                          onClick={() => handleApprove(purchase.id)}
+                          color="success"
+                        >
+                          <ApproveIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Reject Purchase">
+                        <IconButton
+                          size="small"
+                          onClick={() => handleReject(purchase.id)}
+                          color="error"
+                        >
+                          <RejectIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </>
+                  )}
                   <IconButton
                     size="small"
                     onClick={() => handleOpenDialog(purchase)}
-                    disabled={user?.role === 'logistics_officer'}
                   >
                     <EditIcon />
                   </IconButton>
                   <IconButton
                     size="small"
                     onClick={() => handleDelete(purchase.id)}
-                    disabled={user?.role === 'logistics_officer'}
                   >
                     <DeleteIcon />
                   </IconButton>

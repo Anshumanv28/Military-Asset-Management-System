@@ -80,8 +80,8 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 
 // @route   POST /api/assignments
 // @desc    Create new assignment
-// @access  Private (Admin, Base Commander)
-router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+// @access  Private (Admin, Base Commander, Logistics Officer)
+router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
   try {
     const { asset_id, assigned_to, base_id, assignment_date, notes } = req.body;
 
@@ -168,8 +168,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
 
 // @route   PUT /api/assignments/:id/return
 // @desc    Return assigned asset
-// @access  Private (Admin, Base Commander)
-router.put('/:id/return', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+// @access  Private (Admin, Base Commander, Logistics Officer)
+router.put('/:id/return', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { return_date, notes } = req.body;
@@ -205,6 +205,13 @@ router.put('/:id/return', authenticate, authorize('admin', 'base_commander'), as
       });
     }
 
+    if (req.user!.role === 'logistics_officer' && assignment.base_id !== req.user!.base_id) {
+      return res.status(403).json({
+        success: false,
+        error: 'Logistics officers can only return assignments from their base'
+      });
+    }
+
     const updateQuery = `
       UPDATE assignments 
       SET status = 'returned', return_date = $1, notes = COALESCE($2, notes), updated_at = CURRENT_TIMESTAMP
@@ -237,6 +244,133 @@ router.put('/:id/return', authenticate, authorize('admin', 'base_commander'), as
     });
   } catch (error) {
     logger.error('Return assignment error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Server error'
+    });
+  }
+});
+
+// @route   PUT /api/assignments/:id
+// @desc    Update assignment
+// @access  Private (Admin, Base Commander, Logistics Officer)
+router.put('/:id', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { asset_id, assigned_to, base_id, assignment_date, notes } = req.body;
+
+    // Check if assignment exists
+    const assignmentResult = await query(
+      'SELECT * FROM assignments WHERE id = $1',
+      [id]
+    );
+
+    if (assignmentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Assignment not found'
+      });
+    }
+
+    const assignment = assignmentResult.rows[0];
+
+    // Check access permissions
+    if (req.user!.role === 'base_commander' && assignment.base_id !== req.user!.base_id) {
+      return res.status(403).json({
+        success: false,
+        error: 'Base commanders can only update assignments from their base'
+      });
+    }
+
+    if (req.user!.role === 'logistics_officer' && assignment.base_id !== req.user!.base_id) {
+      return res.status(403).json({
+        success: false,
+        error: 'Logistics officers can only update assignments from their base'
+      });
+    }
+
+    const updateQuery = `
+      UPDATE assignments 
+      SET asset_id = $1, assigned_to = $2, base_id = $3, assignment_date = $4, notes = $5, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $6
+      RETURNING *
+    `;
+    const result = await query(updateQuery, [
+      asset_id || assignment.asset_id,
+      assigned_to || assignment.assigned_to,
+      base_id || assignment.base_id,
+      assignment_date || assignment.assignment_date,
+      notes || assignment.notes,
+      id
+    ]);
+
+    return res.json({
+      success: true,
+      data: result.rows[0]
+    });
+  } catch (error) {
+    logger.error('Update assignment error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Server error'
+    });
+  }
+});
+
+// @route   DELETE /api/assignments/:id
+// @desc    Delete assignment
+// @access  Private (Admin, Base Commander, Logistics Officer)
+router.delete('/:id', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Check if assignment exists
+    const assignmentResult = await query(
+      'SELECT * FROM assignments WHERE id = $1',
+      [id]
+    );
+
+    if (assignmentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Assignment not found'
+      });
+    }
+
+    const assignment = assignmentResult.rows[0];
+
+    // Check access permissions
+    if (req.user!.role === 'base_commander' && assignment.base_id !== req.user!.base_id) {
+      return res.status(403).json({
+        success: false,
+        error: 'Base commanders can only delete assignments from their base'
+      });
+    }
+
+    if (req.user!.role === 'logistics_officer' && assignment.base_id !== req.user!.base_id) {
+      return res.status(403).json({
+        success: false,
+        error: 'Logistics officers can only delete assignments from their base'
+      });
+    }
+
+    // Delete the assignment
+    await query('DELETE FROM assignments WHERE id = $1', [id]);
+
+    // Update asset status to available if it was assigned
+    if (assignment.status === 'active') {
+      await query(
+        'UPDATE assets SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        ['available', assignment.asset_id]
+      );
+    }
+
+    return res.json({
+      success: true,
+      message: 'Assignment deleted successfully'
+    });
+  } catch (error) {
+    logger.error('Delete assignment error:', error);
     return res.status(500).json({
       success: false,
       error: 'Server error'

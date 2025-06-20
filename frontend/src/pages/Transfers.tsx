@@ -27,8 +27,6 @@ import {
   CircularProgress,
   Card,
   CardContent,
-  Fab,
-  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -409,6 +407,17 @@ const Transfers: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Actions */}
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={() => handleOpenDialog()}
+        >
+          Create Transfer
+        </Button>
+      </Box>
+
       {/* Transfers Table */}
       <Paper sx={{ width: '100%', overflow: 'hidden' }}>
         <TableContainer>
@@ -596,18 +605,6 @@ const Transfers: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
-
-      {/* Floating Action Button */}
-      <Tooltip title="Request New Transfer">
-        <Fab
-          color="primary"
-          aria-label="add"
-          sx={{ position: 'fixed', bottom: 16, right: 16 }}
-          onClick={() => handleOpenDialog()}
-        >
-          <AddIcon />
-        </Fab>
-      </Tooltip>
     </Box>
   );
 };

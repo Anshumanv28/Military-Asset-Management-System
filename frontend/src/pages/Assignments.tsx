@@ -135,7 +135,14 @@ const Assignments: React.FC = () => {
 
   const fetchAssets = async () => {
     try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/assets?status=available&limit=1000`);
+      let url = `${process.env.REACT_APP_API_URL}/assets?status=available&limit=1000`;
+      
+      // For non-admin users, filter by their base
+      if (user?.role !== 'admin' && user?.base_id) {
+        url += `&base_id=${user.base_id}`;
+      }
+      
+      const response = await axios.get(url);
       setAssets(response.data.data);
     } catch (err: any) {
       console.error('Failed to fetch assets:', err);
@@ -144,7 +151,14 @@ const Assignments: React.FC = () => {
 
   const fetchPersonnel = async () => {
     try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/personnel?limit=1000`);
+      let url = `${process.env.REACT_APP_API_URL}/personnel?limit=1000`;
+      
+      // For non-admin users, filter by their base
+      if (user?.role !== 'admin' && user?.base_id) {
+        url += `&base_id=${user.base_id}`;
+      }
+      
+      const response = await axios.get(url);
       setPersonnel(response.data.data);
     } catch (err: any) {
       console.error('Failed to fetch personnel:', err);
@@ -199,7 +213,7 @@ const Assignments: React.FC = () => {
       setFormData({
         asset_id: '',
         personnel_id: '',
-        base_id: '',
+        base_id: user?.role !== 'admin' ? user?.base_id || '' : '',
         assignment_date: '',
         notes: '',
       });
@@ -293,7 +307,8 @@ const Assignments: React.FC = () => {
     return (
       assignment.status === 'active' &&
       (user?.role === 'admin' || 
-       (user?.role === 'base_commander' && assignment.base_id === user?.base_id))
+       (user?.role === 'base_commander' && assignment.base_id === user?.base_id) ||
+       (user?.role === 'logistics_officer' && assignment.base_id === user?.base_id))
     );
   };
 
@@ -325,24 +340,26 @@ const Assignments: React.FC = () => {
             Filters
           </Typography>
           <Grid container spacing={2}>
-            <Grid item xs={12} sm={3}>
-              <FormControl fullWidth>
-                <InputLabel>Base</InputLabel>
-                <Select
-                  value={filters.base_id}
-                  label="Base"
-                  onChange={(e) => setFilters({ ...filters, base_id: e.target.value })}
-                >
-                  <MenuItem value="">All Bases</MenuItem>
-                  {bases.map((base) => (
-                    <MenuItem key={base.id} value={base.id}>
-                      {base.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={3}>
+            {user?.role === 'admin' && (
+              <Grid item xs={12} sm={3}>
+                <FormControl fullWidth>
+                  <InputLabel>Base</InputLabel>
+                  <Select
+                    value={filters.base_id}
+                    label="Base"
+                    onChange={(e) => setFilters({ ...filters, base_id: e.target.value })}
+                  >
+                    <MenuItem value="">All Bases</MenuItem>
+                    {bases.map((base) => (
+                      <MenuItem key={base.id} value={base.id}>
+                        {base.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+            )}
+            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
               <FormControl fullWidth>
                 <InputLabel>Status</InputLabel>
                 <Select
@@ -358,7 +375,7 @@ const Assignments: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} sm={3}>
+            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
               <FormControl fullWidth>
                 <InputLabel>Asset</InputLabel>
                 <Select
@@ -375,7 +392,7 @@ const Assignments: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} sm={3}>
+            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
               <FormControl fullWidth>
                 <InputLabel>Personnel</InputLabel>
                 <Select
@@ -410,7 +427,6 @@ const Assignments: React.FC = () => {
           variant="contained"
           startIcon={<AddIcon />}
           onClick={() => handleOpenDialog()}
-          disabled={user?.role === 'logistics_officer'}
         >
           New Assignment
         </Button>
@@ -469,7 +485,6 @@ const Assignments: React.FC = () => {
                   <IconButton
                     size="small"
                     onClick={() => handleOpenDialog(assignment)}
-                    disabled={user?.role === 'logistics_officer'}
                   >
                     <EditIcon />
                   </IconButton>
@@ -485,7 +500,6 @@ const Assignments: React.FC = () => {
                   <IconButton
                     size="small"
                     onClick={() => handleDelete(assignment.id)}
-                    disabled={user?.role === 'logistics_officer'}
                   >
                     <DeleteIcon />
                   </IconButton>
@@ -547,23 +561,25 @@ const Assignments: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Base</InputLabel>
-                <Select
-                  value={formData.base_id}
-                  label="Base"
-                  onChange={(e) => setFormData({ ...formData, base_id: e.target.value })}
-                >
-                  {bases.map((base) => (
-                    <MenuItem key={base.id} value={base.id}>
-                      {base.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={6}>
+            {user?.role === 'admin' && (
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Base</InputLabel>
+                  <Select
+                    value={formData.base_id}
+                    label="Base"
+                    onChange={(e) => setFormData({ ...formData, base_id: e.target.value })}
+                  >
+                    {bases.map((base) => (
+                      <MenuItem key={base.id} value={base.id}>
+                        {base.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+            )}
+            <Grid item xs={12} sm={user?.role === 'admin' ? 6 : 12}>
               <LocalizationProvider dateAdapter={AdapterDateFns}>
                 <DatePicker
                   label="Assignment Date"

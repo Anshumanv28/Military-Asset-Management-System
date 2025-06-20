@@ -91,9 +91,9 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 });
 
 // @route   POST /api/transfers
-// @desc    Create new transfer request
-// @access  Private (Admin, Base Commander)
-router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+// @desc    Create new transfer request (pending approval)
+// @access  Private (Admin, Base Commander, Logistics Officer)
+router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
   try {
     const { from_base_id, to_base_id, asset_type_id, quantity, transfer_date, notes } = req.body;
 
@@ -111,6 +111,13 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
         return res.status(403).json({
           success: false,
           error: 'Base commanders can only create transfers involving their base'
+        });
+      }
+    } else if (req.user!.role === 'logistics_officer') {
+      if (from_base_id !== req.user!.base_id && to_base_id !== req.user!.base_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'Logistics officers can only create transfers involving their base'
         });
       }
     }
@@ -141,12 +148,24 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       });
     }
 
+    // Set status based on user role
+    let status = 'pending';
+    let approved_by = null;
+    let approved_at = null;
+
+    // Admin and Base Commander can auto-approve their own transfers
+    if (req.user!.role === 'admin' || req.user!.role === 'base_commander') {
+      status = 'approved';
+      approved_by = req.user!.user_id;
+      approved_at = new Date();
+    }
+
     // Generate transfer number
     const transferNumber = `TRF-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 
     const createQuery = `
-      INSERT INTO transfers (transfer_number, from_base_id, to_base_id, asset_type_id, quantity, transfer_date, created_by, notes)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      INSERT INTO transfers (transfer_number, from_base_id, to_base_id, asset_type_id, quantity, transfer_date, status, approved_by, approved_at, created_by, notes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       RETURNING *
     `;
     const result = await query(createQuery, [
@@ -156,6 +175,9 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       asset_type_id,
       quantity,
       transfer_date || new Date().toISOString().split('T')[0],
+      status,
+      approved_by,
+      approved_at,
       req.user!.user_id,
       notes || null
     ]);
@@ -171,7 +193,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       from_base_id,
       to_base_id,
       asset_type_id,
-      quantity
+      quantity,
+      status
     });
 
     return res.status(201).json({
