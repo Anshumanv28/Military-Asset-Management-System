@@ -53,7 +53,7 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
       FROM purchases p
       JOIN asset_types at ON p.asset_type_id = at.id
       JOIN bases b ON p.base_id = b.id
-      JOIN users u ON p.created_by = u.id
+      JOIN users u ON p.created_by::uuid = u.id
       WHERE ${whereClause}
       ORDER BY p.purchase_date DESC
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}

@@ -45,11 +45,13 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
     const assignmentsQuery = `
       SELECT a.*, ast.name as asset_name, ast.serial_number, at.name as asset_type_name, b.name as base_name,
-             u.first_name, u.last_name
+             CONCAT(p.first_name, ' ', p.last_name) as personnel_name, p.rank as personnel_rank,
+             CONCAT(u.first_name, ' ', u.last_name) as assigned_by_name
       FROM assignments a
       JOIN assets ast ON a.asset_id = ast.id
       JOIN asset_types at ON ast.asset_type_id = at.id
       JOIN bases b ON a.base_id = b.id
+      JOIN personnel p ON a.assigned_to = p.id::text
       JOIN users u ON a.assigned_by = u.id
       WHERE ${whereClause}
       ORDER BY a.assignment_date DESC
@@ -87,7 +89,7 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
     if (!asset_id || !assigned_to || !base_id || !assignment_date) {
       return res.status(400).json({
         success: false,
-        error: 'Asset ID, assigned to, base ID, and assignment date are required'
+        error: 'Asset ID, assigned_to, base ID, and assignment date are required'
       });
     }
 

@@ -11,12 +11,29 @@ const seedDatabase = async () => {
 
     // Create admin user
     const adminPassword = await bcrypt.hash('admin123', 10);
-    const adminUser = await query(`
-      INSERT INTO users (username, email, password_hash, first_name, last_name, role)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      ON CONFLICT (username) DO NOTHING
-      RETURNING id
-    `, ['admin', 'admin@military.gov', adminPassword, 'System', 'Administrator', 'admin']);
+    let adminUserId;
+    
+    try {
+      const adminUser = await query(`
+        INSERT INTO users (username, email, password_hash, first_name, last_name, role)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (username) DO UPDATE SET 
+          email = EXCLUDED.email,
+          password_hash = EXCLUDED.password_hash,
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          role = EXCLUDED.role
+        RETURNING id
+      `, ['admin', 'admin@military.gov', adminPassword, 'System', 'Administrator', 'admin']);
+      
+      adminUserId = adminUser.rows[0].id;
+    } catch (error) {
+      // If admin user creation fails, try to get existing admin user
+      const existingAdmin = await query(`
+        SELECT id FROM users WHERE username = 'admin'
+      `);
+      adminUserId = existingAdmin.rows[0]?.id;
+    }
 
     // Create sample bases
     const bases = [
@@ -31,13 +48,11 @@ const seedDatabase = async () => {
       const result = await query(`
         INSERT INTO bases (name, code, location)
         VALUES ($1, $2, $3)
-        ON CONFLICT (code) DO NOTHING
+        ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, location = EXCLUDED.location
         RETURNING id
       `, [base.name, base.code, base.location]);
       
-      if (result.rows.length > 0) {
-        baseIds.push(result.rows[0].id);
-      }
+      baseIds.push(result.rows[0].id);
     }
 
     // Create sample users for each base
@@ -53,8 +68,43 @@ const seedDatabase = async () => {
       await query(`
         INSERT INTO users (username, email, password_hash, first_name, last_name, role, base_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (username) DO NOTHING
+        ON CONFLICT (username) DO UPDATE SET 
+          email = EXCLUDED.email, 
+          password_hash = EXCLUDED.password_hash,
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          role = EXCLUDED.role,
+          base_id = EXCLUDED.base_id
       `, [user.username, user.email, password, user.first_name, user.last_name, user.role, user.base_id]);
+    }
+
+    // Create sample personnel
+    const personnel = [
+      { first_name: 'James', last_name: 'Wilson', rank: 'Sergeant', base_id: baseIds[0], email: 'jwilson@military.gov', department: 'Infantry' },
+      { first_name: 'Maria', last_name: 'Garcia', rank: 'Corporal', base_id: baseIds[0], email: 'mgarcia@military.gov', department: 'Logistics' },
+      { first_name: 'Robert', last_name: 'Chen', rank: 'Lieutenant', base_id: baseIds[1], email: 'rchen@military.gov', department: 'Armor' },
+      { first_name: 'Jennifer', last_name: 'Taylor', rank: 'Captain', base_id: baseIds[1], email: 'jtaylor@military.gov', department: 'Artillery' },
+      { first_name: 'David', last_name: 'Brown', rank: 'Staff Sergeant', base_id: baseIds[2], email: 'dbrown@military.gov', department: 'Engineers' },
+      { first_name: 'Amanda', last_name: 'Miller', rank: 'First Lieutenant', base_id: baseIds[2], email: 'amiller@military.gov', department: 'Medical' },
+      { first_name: 'Christopher', last_name: 'Anderson', rank: 'Sergeant First Class', base_id: baseIds[3], email: 'canderson@military.gov', department: 'Military Police' },
+      { first_name: 'Jessica', last_name: 'Thomas', rank: 'Major', base_id: baseIds[3], email: 'jthomas@military.gov', department: 'Intelligence' }
+    ];
+
+    const personnelIds = [];
+    for (const person of personnel) {
+      const result = await query(`
+        INSERT INTO personnel (first_name, last_name, rank, base_id, email, department)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (first_name, last_name, email) DO UPDATE SET 
+          rank = EXCLUDED.rank,
+          base_id = EXCLUDED.base_id,
+          department = EXCLUDED.department
+        RETURNING id
+      `, [person.first_name, person.last_name, person.rank, person.base_id, person.email, person.department]);
+      
+      if (result.rows[0]) {
+        personnelIds.push(result.rows[0].id);
+      }
     }
 
     // Create asset types
@@ -72,13 +122,14 @@ const seedDatabase = async () => {
       const result = await query(`
         INSERT INTO asset_types (name, category, description, unit_of_measure)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (name) DO NOTHING
+        ON CONFLICT (name) DO UPDATE SET 
+          category = EXCLUDED.category,
+          description = EXCLUDED.description,
+          unit_of_measure = EXCLUDED.unit_of_measure
         RETURNING id
       `, [assetType.name, assetType.category, assetType.description, assetType.unit_of_measure]);
       
-      if (result.rows.length > 0) {
-        assetTypeIds.push(result.rows[0].id);
-      }
+      assetTypeIds.push(result.rows[0].id);
     }
 
     // Create sample assets
@@ -89,12 +140,48 @@ const seedDatabase = async () => {
       { asset_type_id: assetTypeIds[3], serial_number: 'NVG-001', name: 'Night Vision Goggles #001', current_base_id: baseIds[0] }
     ];
 
+    const assetIds = [];
     for (const asset of assets) {
-      await query(`
-        INSERT INTO assets (asset_type_id, serial_number, name, current_base_id)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (serial_number) DO NOTHING
-      `, [asset.asset_type_id, asset.serial_number, asset.name, asset.current_base_id]);
+      if (asset.asset_type_id && asset.current_base_id) {
+        const result = await query(`
+          INSERT INTO assets (asset_type_id, serial_number, name, current_base_id)
+          VALUES ($1, $2, $3, $4)
+          ON CONFLICT (serial_number) DO UPDATE SET 
+            asset_type_id = EXCLUDED.asset_type_id,
+            name = EXCLUDED.name,
+            current_base_id = EXCLUDED.current_base_id
+          RETURNING id
+        `, [asset.asset_type_id, asset.serial_number, asset.name, asset.current_base_id]);
+        
+        if (result.rows[0]) {
+          assetIds.push(result.rows[0].id);
+        }
+      }
+    }
+
+    // Create sample assignments
+    const assignments = [
+      { asset_id: assetIds[0], assigned_to: personnelIds[0], base_id: baseIds[0], assignment_date: '2024-01-15', status: 'active' },
+      { asset_id: assetIds[1], assigned_to: personnelIds[1], base_id: baseIds[0], assignment_date: '2024-01-20', status: 'active' },
+      { asset_id: assetIds[2], assigned_to: personnelIds[2], base_id: baseIds[1], assignment_date: '2024-02-01', status: 'active' },
+      { asset_id: assetIds[3], assigned_to: personnelIds[3], base_id: baseIds[1], assignment_date: '2024-02-05', status: 'returned', return_date: '2024-02-15' }
+    ];
+
+    for (const assignment of assignments) {
+      if (assignment.asset_id && assignment.assigned_to && assignment.base_id) {
+        await query(`
+          INSERT INTO assignments (asset_id, assigned_to, assigned_by, base_id, assignment_date, return_date, status)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `, [
+          assignment.asset_id,
+          assignment.assigned_to,
+          adminUserId || '00000000-0000-0000-0000-000000000000',
+          assignment.base_id,
+          assignment.assignment_date,
+          assignment.return_date || null,
+          assignment.status
+        ]);
+      }
     }
 
     // Create sample purchases
@@ -105,20 +192,22 @@ const seedDatabase = async () => {
     ];
 
     for (const purchase of purchases) {
-      const total_cost = purchase.quantity * purchase.unit_cost;
-      await query(`
-        INSERT INTO purchases (asset_type_id, base_id, quantity, unit_cost, total_cost, supplier, purchase_date, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        purchase.asset_type_id,
-        purchase.base_id,
-        purchase.quantity,
-        purchase.unit_cost,
-        total_cost,
-        purchase.supplier,
-        purchase.purchase_date,
-        adminUser.rows[0]?.id || '00000000-0000-0000-0000-000000000000'
-      ]);
+      if (purchase.asset_type_id && purchase.base_id) {
+        const total_cost = purchase.quantity * purchase.unit_cost;
+        await query(`
+          INSERT INTO purchases (asset_type_id, base_id, quantity, unit_cost, total_cost, supplier, purchase_date, created_by)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          purchase.asset_type_id,
+          purchase.base_id,
+          purchase.quantity,
+          purchase.unit_cost,
+          total_cost,
+          purchase.supplier,
+          purchase.purchase_date,
+          adminUserId || '00000000-0000-0000-0000-000000000000'
+        ]);
+      }
     }
 
     // Create sample transfers
@@ -128,20 +217,22 @@ const seedDatabase = async () => {
     ];
 
     for (const transfer of transfers) {
-      const transferNumber = `TRF-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-      await query(`
-        INSERT INTO transfers (transfer_number, from_base_id, to_base_id, asset_type_id, quantity, transfer_date, status, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      `, [
-        transferNumber,
-        transfer.from_base_id,
-        transfer.to_base_id,
-        transfer.asset_type_id,
-        transfer.quantity,
-        transfer.transfer_date,
-        transfer.status,
-        adminUser.rows[0]?.id || '00000000-0000-0000-0000-000000000000'
-      ]);
+      if (transfer.from_base_id && transfer.to_base_id && transfer.asset_type_id) {
+        const transferNumber = `TRF-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        await query(`
+          INSERT INTO transfers (transfer_number, from_base_id, to_base_id, asset_type_id, quantity, transfer_date, status, created_by)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `, [
+          transferNumber,
+          transfer.from_base_id,
+          transfer.to_base_id,
+          transfer.asset_type_id,
+          transfer.quantity,
+          transfer.transfer_date,
+          transfer.status,
+          adminUserId || '00000000-0000-0000-0000-000000000000'
+        ]);
+      }
     }
 
     // Create sample expenditures
@@ -151,17 +242,19 @@ const seedDatabase = async () => {
     ];
 
     for (const expenditure of expenditures) {
-      await query(`
-        INSERT INTO expenditures (asset_type_id, base_id, quantity, expenditure_date, reason, created_by)
-        VALUES ($1, $2, $3, $4, $5, $6)
-      `, [
-        expenditure.asset_type_id,
-        expenditure.base_id,
-        expenditure.quantity,
-        expenditure.expenditure_date,
-        expenditure.reason,
-        adminUser.rows[0]?.id || '00000000-0000-0000-0000-000000000000'
-      ]);
+      if (expenditure.asset_type_id && expenditure.base_id) {
+        await query(`
+          INSERT INTO expenditures (asset_type_id, base_id, quantity, expenditure_date, reason, created_by)
+          VALUES ($1, $2, $3, $4, $5, $6)
+        `, [
+          expenditure.asset_type_id,
+          expenditure.base_id,
+          expenditure.quantity,
+          expenditure.expenditure_date,
+          expenditure.reason,
+          adminUserId || '00000000-0000-0000-0000-000000000000'
+        ]);
+      }
     }
 
     logger.info('✅ Database seeding completed successfully');
@@ -170,8 +263,9 @@ const seedDatabase = async () => {
     logger.info('   - Base commanders: commander1, commander2 / password123');
     logger.info('   - Logistics officers: logistics1, logistics2 / password123');
     logger.info('   - 4 military bases');
+    logger.info('   - 8 personnel records');
     logger.info('   - 6 asset types');
-    logger.info('   - Sample assets, purchases, transfers, and expenditures');
+    logger.info('   - Sample assets, assignments, purchases, transfers, and expenditures');
 
   } catch (error) {
     logger.error('❌ Database seeding failed:', error);
@@ -184,4 +278,4 @@ if (require.main === module) {
   seedDatabase();
 }
 
-export { seedDatabase }; 
+export { seedDatabase };

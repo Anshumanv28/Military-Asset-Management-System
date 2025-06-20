@@ -238,37 +238,21 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
     const { base_id, start_date, end_date } = req.query as { [key: string]: string };
     const { role, base_id: user_base_id } = req.user!;
 
-    // This block correctly determines if and what to filter by.
-    let filterByBase = true;
-    let targetBaseId = user_base_id;
-    if (role === 'admin') {
-      if (base_id) {
-        targetBaseId = base_id;
-      } else {
-        filterByBase = false; // Admin, no base selected: do not filter by base.
-      }
-    }
+    const targetBaseId = (role === 'admin' && base_id) ? base_id : user_base_id;
     
-    // This function builds a query with the correct WHERE clauses and parameters.
-    const buildQuery = (select: string, from: string, dateCol: string, baseCol: string = 'base_id') => {
-      const qParams: any[] = [];
-      const where: string[] = [];
+    const queryParams: any[] = [targetBaseId];
+    if (start_date && end_date) {
+      queryParams.push(start_date, end_date);
+    }
 
-      if (filterByBase) {
-        qParams.push(targetBaseId);
-        where.push(`${baseCol} = $${qParams.length}`);
-      }
-      
-      if (start_date && end_date) {
-        qParams.push(start_date, end_date);
-        where.push(`${dateCol}::date BETWEEN $${qParams.length - 1} AND $${qParams.length}`);
-      }
+    const dateFilter = (dateCol: string) => 
+      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $2 AND $3`;
 
-      const whereClause = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
-      const finalQuery = `${select} FROM ${from} ${whereClause}`;
-      
-      return query(finalQuery, qParams);
-    };
+    const purchasesQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM purchases WHERE base_id = $1 ${dateFilter('purchase_date')}`;
+    const expendedQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM expenditures WHERE base_id = $1 ${dateFilter('expenditure_date')}`;
+    const assignmentsQuery = `SELECT COALESCE(COUNT(*), 0) AS count FROM assignments WHERE status = 'active' AND base_id = $1 ${dateFilter('assignment_date')}`;
+    const transfersInQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM transfers WHERE status = 'completed' AND to_base_id = $1 ${dateFilter('transfer_date')}`;
+    const transfersOutQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM transfers WHERE status = 'completed' AND from_base_id = $1 ${dateFilter('transfer_date')}`;
 
     const [
       purchasesRes,
@@ -277,11 +261,11 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
       transfersInRes,
       transfersOutRes
     ] = await Promise.all([
-      buildQuery('SELECT COALESCE(SUM(quantity), 0) AS count', 'purchases', 'purchase_date'),
-      buildQuery('SELECT COALESCE(SUM(quantity), 0) AS count', 'expenditures', 'expenditure_date'),
-      buildQuery("SELECT COALESCE(COUNT(*), 0) AS count", "assignments WHERE status = 'active'", 'assignment_date'),
-      buildQuery('SELECT COALESCE(SUM(quantity), 0) AS count', "transfers WHERE status = 'completed'", 'transfer_date', 'to_base_id'),
-      buildQuery('SELECT COALESCE(SUM(quantity), 0) AS count', "transfers WHERE status = 'completed'", 'transfer_date', 'from_base_id')
+      query(purchasesQuery, queryParams),
+      query(expendedQuery, queryParams),
+      query(assignmentsQuery, queryParams),
+      query(transfersInQuery, queryParams),
+      query(transfersOutQuery, queryParams)
     ]);
     
     const purchases = parseInt(purchasesRes.rows[0].count) || 0;

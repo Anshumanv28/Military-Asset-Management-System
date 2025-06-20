@@ -33,6 +33,20 @@ CREATE TABLE users (
 -- Now that both users and bases tables exist, add the foreign key constraint to bases
 ALTER TABLE bases ADD CONSTRAINT fk_bases_commander_id FOREIGN KEY (commander_id) REFERENCES users(id) ON DELETE SET NULL;
 
+-- Personnel table for managing military personnel
+CREATE TABLE personnel (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    rank VARCHAR(50) NOT NULL,
+    base_id UUID NOT NULL REFERENCES bases(id),
+    email VARCHAR(255),
+    phone VARCHAR(50),
+    department VARCHAR(100),
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Asset types table for categorizing equipment
 CREATE TABLE asset_types (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -111,7 +125,7 @@ CREATE TABLE transfer_items (
 CREATE TABLE assignments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     asset_id UUID NOT NULL REFERENCES assets(id),
-    assigned_to VARCHAR(255) NOT NULL, -- Personnel name/ID
+    personnel_id UUID NOT NULL REFERENCES personnel(id),
     assigned_by UUID NOT NULL REFERENCES users(id),
     base_id UUID NOT NULL REFERENCES bases(id),
     assignment_date DATE NOT NULL,
@@ -157,6 +171,11 @@ CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_base_id ON users(base_id);
 
+CREATE INDEX idx_personnel_name ON personnel(name);
+CREATE INDEX idx_personnel_rank ON personnel(rank);
+CREATE INDEX idx_personnel_base_id ON personnel(base_id);
+CREATE INDEX idx_personnel_is_active ON personnel(is_active);
+
 CREATE INDEX idx_bases_code ON bases(code);
 CREATE INDEX idx_bases_commander_id ON bases(commander_id);
 
@@ -181,6 +200,7 @@ CREATE INDEX idx_transfer_items_transfer_id ON transfer_items(transfer_id);
 CREATE INDEX idx_transfer_items_asset_id ON transfer_items(asset_id);
 
 CREATE INDEX idx_assignments_asset_id ON assignments(asset_id);
+CREATE INDEX idx_assignments_personnel_id ON assignments(personnel_id);
 CREATE INDEX idx_assignments_base_id ON assignments(base_id);
 CREATE INDEX idx_assignments_assigned_by ON assignments(assigned_by);
 CREATE INDEX idx_assignments_status ON assignments(status);
@@ -205,6 +225,7 @@ END;
 $$ language 'plpgsql';
 
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_personnel_updated_at BEFORE UPDATE ON personnel FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_bases_updated_at BEFORE UPDATE ON bases FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_asset_types_updated_at BEFORE UPDATE ON asset_types FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_assets_updated_at BEFORE UPDATE ON assets FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

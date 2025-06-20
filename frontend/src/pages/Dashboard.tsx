@@ -23,6 +23,7 @@ import {
   SwapHoriz,
   Assignment,
   RemoveCircle,
+  Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -56,13 +57,18 @@ const Dashboard: React.FC = () => {
   const [endDate, setEndDate] = useState<Date | null>(null);
   const { user } = useAuth();
 
+  // Applied filter states (used for actual API calls)
+  const [appliedBase, setAppliedBase] = useState('');
+  const [appliedStartDate, setAppliedStartDate] = useState<Date | null>(null);
+  const [appliedEndDate, setAppliedEndDate] = useState<Date | null>(null);
+
   const fetchMetrics = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (selectedBase) params.append('base_id', selectedBase);
-      if (startDate) params.append('start_date', startDate.toISOString().split('T')[0]);
-      if (endDate) params.append('end_date', endDate.toISOString().split('T')[0]);
+      if (appliedBase) params.append('base_id', appliedBase);
+      if (appliedStartDate) params.append('start_date', appliedStartDate.toISOString().split('T')[0]);
+      if (appliedEndDate) params.append('end_date', appliedEndDate.toISOString().split('T')[0]);
 
       const response = await axios.get(`${process.env.REACT_APP_API_URL}/dashboard/summary`, { params });
       setMetrics(response.data.data);
@@ -71,7 +77,7 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [selectedBase, startDate, endDate]);
+  }, [appliedBase, appliedStartDate, appliedEndDate]);
 
   useEffect(() => {
     const fetchBases = async () => {
@@ -90,13 +96,22 @@ const Dashboard: React.FC = () => {
   }, [fetchMetrics, user?.role]);
 
   const handleFilterSubmit = () => {
-    fetchMetrics();
+    setAppliedBase(selectedBase);
+    setAppliedStartDate(startDate);
+    setAppliedEndDate(endDate);
   }
 
   const handleClearFilters = () => {
     setSelectedBase('');
     setStartDate(null);
     setEndDate(null);
+    setAppliedBase('');
+    setAppliedStartDate(null);
+    setAppliedEndDate(null);
+  }
+
+  const handleRefresh = () => {
+    fetchMetrics();
   }
 
   if (loading) {
@@ -175,9 +190,19 @@ const Dashboard: React.FC = () => {
 
   return (
     <Box>
-      <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold', mb: 3 }}>
-        Dashboard
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
+          Dashboard
+        </Typography>
+        <Button
+          variant="outlined"
+          startIcon={<RefreshIcon />}
+          onClick={fetchMetrics}
+          disabled={loading}
+        >
+          Refresh
+        </Button>
+      </Box>
 
       {/* Filter Section */}
       <Card sx={{ mb: 3 }}>

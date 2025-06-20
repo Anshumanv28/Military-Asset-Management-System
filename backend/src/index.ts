@@ -61,21 +61,27 @@ app.get('/health', (_req, res) => {
 import authRoutes from './routes/auth';
 import dashboardRoutes from './routes/dashboard';
 import assetsRoutes from './routes/assets';
+import assetTypesRoutes from './routes/asset-types';
 import purchasesRoutes from './routes/purchases';
 import transfersRoutes from './routes/transfers';
 import assignmentsRoutes from './routes/assignments';
 import expendituresRoutes from './routes/expenditures';
 import basesRoutes from './routes/bases';
+import personnelRoutes from './routes/personnel';
+import usersRoutes from './routes/users';
 
 // API routes
 app.use('/api/auth', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/assets', assetsRoutes);
+app.use('/api/asset-types', assetTypesRoutes);
 app.use('/api/purchases', purchasesRoutes);
 app.use('/api/transfers', transfersRoutes);
 app.use('/api/assignments', assignmentsRoutes);
 app.use('/api/expenditures', expendituresRoutes);
 app.use('/api/bases', basesRoutes);
+app.use('/api/personnel', personnelRoutes);
+app.use('/api/users', usersRoutes);
 
 // 404 handler
 app.use('*', (_req, res) => {

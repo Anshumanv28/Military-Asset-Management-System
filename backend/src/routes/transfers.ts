@@ -10,7 +10,7 @@ const router = Router();
 // @access  Private
 router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const { from_base_id, to_base_id, status, page = 1, limit = 10 } = req.query;
+    const { from_base_id, to_base_id, asset_type_id, status, page = 1, limit = 10 } = req.query;
     
     let whereConditions = ['1=1'];
     const params: any[] = [];
@@ -30,6 +30,11 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
         whereConditions.push(`t.to_base_id = $${paramIndex++}`);
         params.push(to_base_id);
       }
+    }
+
+    if (asset_type_id) {
+      whereConditions.push(`t.asset_type_id = $${paramIndex++}`);
+      params.push(asset_type_id);
     }
 
     if (status) {
@@ -53,13 +58,15 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     const transfersQuery = `
       SELECT t.*, 
              fb.name as from_base_name, tb.name as to_base_name,
+             at.name as asset_type_name,
              u.first_name, u.last_name
       FROM transfers t
       JOIN bases fb ON t.from_base_id = fb.id
       JOIN bases tb ON t.to_base_id = tb.id
-      JOIN users u ON t.requested_by = u.id
+      JOIN asset_types at ON t.asset_type_id = at.id
+      JOIN users u ON t.created_by::uuid = u.id
       WHERE ${whereClause}
-      ORDER BY t.request_date DESC
+      ORDER BY t.transfer_date DESC
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
     `;
     const transfersResult = await query(transfersQuery, [...params, parseInt(limit as string), offset]);
@@ -88,13 +95,13 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 // @access  Private (Admin, Base Commander)
 router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
-    const { from_base_id, to_base_id, asset_ids, request_date, notes } = req.body;
+    const { from_base_id, to_base_id, asset_type_id, quantity, transfer_date, notes } = req.body;
 
     // Validate required fields
-    if (!from_base_id || !to_base_id || !asset_ids || !Array.isArray(asset_ids) || asset_ids.length === 0) {
+    if (!from_base_id || !to_base_id || !asset_type_id || !quantity) {
       return res.status(400).json({
         success: false,
-        error: 'From base ID, to base ID, and asset IDs are required'
+        error: 'From base ID, to base ID, asset type ID, and quantity are required'
       });
     }
 
@@ -121,39 +128,35 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       });
     }
 
-    // Check if assets exist and are available at the source base
-    const assetsResult = await query(
-      'SELECT id, name, status FROM assets WHERE id = ANY($1) AND base_id = $2',
-      [asset_ids, from_base_id]
+    // Check if asset type exists
+    const assetTypeResult = await query(
+      'SELECT id FROM asset_types WHERE id = $1',
+      [asset_type_id]
     );
 
-    if (assetsResult.rows.length !== asset_ids.length) {
+    if (assetTypeResult.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Some assets not found or not at the specified source base'
+        error: 'Invalid asset type ID'
       });
     }
 
-    // Check if all assets are available
-    const unavailableAssets = assetsResult.rows.filter((asset: any) => asset.status !== 'available');
-    if (unavailableAssets.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: `Assets not available for transfer: ${unavailableAssets.map((a: any) => a.name).join(', ')}`
-      });
-    }
+    // Generate transfer number
+    const transferNumber = `TRF-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 
     const createQuery = `
-      INSERT INTO transfers (from_base_id, to_base_id, asset_ids, requested_by, request_date, notes)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO transfers (transfer_number, from_base_id, to_base_id, asset_type_id, quantity, transfer_date, created_by, notes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `;
     const result = await query(createQuery, [
+      transferNumber,
       from_base_id,
       to_base_id,
-      asset_ids,
+      asset_type_id,
+      quantity,
+      transfer_date || new Date().toISOString().split('T')[0],
       req.user!.user_id,
-      request_date || new Date().toISOString().split('T')[0],
       notes || null
     ]);
 
@@ -164,9 +167,11 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       action: 'TRANSFER_REQUESTED',
       user_id: req.user!.user_id,
       transfer_id: newTransfer.id,
+      transfer_number: newTransfer.transfer_number,
       from_base_id,
       to_base_id,
-      asset_count: asset_ids.length
+      asset_type_id,
+      quantity
     });
 
     return res.status(201).json({
@@ -188,7 +193,6 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
 router.put('/:id/approve', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { approval_date, notes } = req.body;
 
     // Check if transfer exists
     const transferResult = await query(
@@ -205,20 +209,20 @@ router.put('/:id/approve', authenticate, authorize('admin', 'base_commander'), a
 
     const transfer = transferResult.rows[0];
 
-    // Check if transfer is pending
+    // Check if transfer is already approved or completed
     if (transfer.status !== 'pending') {
       return res.status(400).json({
         success: false,
-        error: 'Transfer is not pending approval'
+        error: 'Transfer is not in pending status'
       });
     }
 
     // Check access permissions
     if (req.user!.role === 'base_commander') {
-      if (transfer.from_base_id !== req.user!.base_id && transfer.to_base_id !== req.user!.base_id) {
+      if (transfer.to_base_id !== req.user!.base_id) {
         return res.status(403).json({
           success: false,
-          error: 'Base commanders can only approve transfers involving their base'
+          error: 'Base commanders can only approve transfers to their base'
         });
       }
     }
@@ -226,35 +230,25 @@ router.put('/:id/approve', authenticate, authorize('admin', 'base_commander'), a
     // Update transfer status
     const updateQuery = `
       UPDATE transfers 
-      SET status = 'approved', approval_date = $1, approved_by = $2, notes = COALESCE($3, notes), updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
+      SET status = 'approved', approved_by = $1, approved_at = CURRENT_TIMESTAMP
+      WHERE id = $2
       RETURNING *
     `;
-    const result = await query(updateQuery, [
-      approval_date || new Date().toISOString().split('T')[0],
-      req.user!.user_id,
-      notes,
-      id
-    ]);
+    const result = await query(updateQuery, [req.user!.user_id, id]);
 
-    // Update asset base assignments
-    await query(
-      'UPDATE assets SET base_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = ANY($2)',
-      [transfer.to_base_id, transfer.asset_ids]
-    );
+    const updatedTransfer = result.rows[0];
 
     // Log transfer approval
     logger.info({
       action: 'TRANSFER_APPROVED',
       user_id: req.user!.user_id,
       transfer_id: id,
-      from_base_id: transfer.from_base_id,
-      to_base_id: transfer.to_base_id
+      transfer_number: transfer.transfer_number
     });
 
     return res.json({
       success: true,
-      data: result.rows[0]
+      data: updatedTransfer
     });
   } catch (error) {
     logger.error('Approve transfer error:', error);
@@ -271,7 +265,7 @@ router.put('/:id/approve', authenticate, authorize('admin', 'base_commander'), a
 router.put('/:id/reject', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { rejection_reason } = req.body;
+    const { notes } = req.body;
 
     // Check if transfer exists
     const transferResult = await query(
@@ -288,11 +282,155 @@ router.put('/:id/reject', authenticate, authorize('admin', 'base_commander'), as
 
     const transfer = transferResult.rows[0];
 
-    // Check if transfer is pending
+    // Check if transfer is already processed
     if (transfer.status !== 'pending') {
       return res.status(400).json({
         success: false,
-        error: 'Transfer is not pending approval'
+        error: 'Transfer is not in pending status'
+      });
+    }
+
+    // Check access permissions
+    if (req.user!.role === 'base_commander') {
+      if (transfer.to_base_id !== req.user!.base_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'Base commanders can only reject transfers to their base'
+        });
+      }
+    }
+
+    // Update transfer status
+    const updateQuery = `
+      UPDATE transfers 
+      SET status = 'cancelled', notes = COALESCE($1, notes)
+      WHERE id = $2
+      RETURNING *
+    `;
+    const result = await query(updateQuery, [notes, id]);
+
+    const updatedTransfer = result.rows[0];
+
+    // Log transfer rejection
+    logger.info({
+      action: 'TRANSFER_REJECTED',
+      user_id: req.user!.user_id,
+      transfer_id: id,
+      transfer_number: transfer.transfer_number
+    });
+
+    return res.json({
+      success: true,
+      data: updatedTransfer
+    });
+  } catch (error) {
+    logger.error('Reject transfer error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Server error'
+    });
+  }
+});
+
+// @route   PUT /api/transfers/:id/complete
+// @desc    Complete transfer
+// @access  Private (Admin, Base Commander)
+router.put('/:id/complete', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Check if transfer exists
+    const transferResult = await query(
+      'SELECT * FROM transfers WHERE id = $1',
+      [id]
+    );
+
+    if (transferResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transfer not found'
+      });
+    }
+
+    const transfer = transferResult.rows[0];
+
+    // Check if transfer is approved
+    if (transfer.status !== 'approved') {
+      return res.status(400).json({
+        success: false,
+        error: 'Transfer must be approved before completion'
+      });
+    }
+
+    // Check access permissions
+    if (req.user!.role === 'base_commander') {
+      if (transfer.from_base_id !== req.user!.base_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'Base commanders can only complete transfers from their base'
+        });
+      }
+    }
+
+    // Update transfer status
+    const updateQuery = `
+      UPDATE transfers 
+      SET status = 'completed'
+      WHERE id = $1
+      RETURNING *
+    `;
+    const result = await query(updateQuery, [id]);
+
+    const updatedTransfer = result.rows[0];
+
+    // Log transfer completion
+    logger.info({
+      action: 'TRANSFER_COMPLETED',
+      user_id: req.user!.user_id,
+      transfer_id: id,
+      transfer_number: transfer.transfer_number
+    });
+
+    return res.json({
+      success: true,
+      data: updatedTransfer
+    });
+  } catch (error) {
+    logger.error('Complete transfer error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Server error'
+    });
+  }
+});
+
+// @route   DELETE /api/transfers/:id
+// @desc    Delete transfer
+// @access  Private (Admin, Base Commander)
+router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Check if transfer exists
+    const transferResult = await query(
+      'SELECT * FROM transfers WHERE id = $1',
+      [id]
+    );
+
+    if (transferResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Transfer not found'
+      });
+    }
+
+    const transfer = transferResult.rows[0];
+
+    // Check if transfer can be deleted (only pending transfers)
+    if (transfer.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        error: 'Only pending transfers can be deleted'
       });
     }
 
@@ -301,37 +439,28 @@ router.put('/:id/reject', authenticate, authorize('admin', 'base_commander'), as
       if (transfer.from_base_id !== req.user!.base_id && transfer.to_base_id !== req.user!.base_id) {
         return res.status(403).json({
           success: false,
-          error: 'Base commanders can only reject transfers involving their base'
+          error: 'Base commanders can only delete transfers involving their base'
         });
       }
     }
 
-    const updateQuery = `
-      UPDATE transfers 
-      SET status = 'rejected', rejection_reason = $1, rejected_by = $2, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $3
-      RETURNING *
-    `;
-    const result = await query(updateQuery, [
-      rejection_reason,
-      req.user!.user_id,
-      id
-    ]);
+    // Delete transfer
+    await query('DELETE FROM transfers WHERE id = $1', [id]);
 
-    // Log transfer rejection
+    // Log transfer deletion
     logger.info({
-      action: 'TRANSFER_REJECTED',
+      action: 'TRANSFER_DELETED',
       user_id: req.user!.user_id,
       transfer_id: id,
-      reason: rejection_reason
+      transfer_number: transfer.transfer_number
     });
 
     return res.json({
       success: true,
-      data: result.rows[0]
+      message: 'Transfer deleted successfully'
     });
   } catch (error) {
-    logger.error('Reject transfer error:', error);
+    logger.error('Delete transfer error:', error);
     return res.status(500).json({
       success: false,
       error: 'Server error'
