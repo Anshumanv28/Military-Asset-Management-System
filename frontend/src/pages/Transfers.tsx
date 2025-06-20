@@ -29,15 +29,11 @@ import {
   CardContent,
   Fab,
   Tooltip,
-  Stepper,
-  Step,
-  StepLabel,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  Visibility as ViewIcon,
   CheckCircle as ApproveIcon,
   CheckCircle as CheckCircleIcon,
   Cancel as RejectIcon,
@@ -84,8 +80,6 @@ interface CreateTransferForm {
   transfer_date: string;
   notes?: string;
 }
-
-const steps = ['Request Submitted', 'Pending Approval', 'Approved', 'Completed'];
 
 const Transfers: React.FC = () => {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
@@ -277,22 +271,6 @@ const Transfers: React.FC = () => {
         return 'error';
       default:
         return 'default';
-    }
-  };
-
-  const getActiveStep = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 1;
-      case 'approved':
-        return 2;
-      case 'completed':
-        return 3;
-      case 'rejected':
-      case 'cancelled':
-        return 1; // Rejected/Cancelled stays at step 1
-      default:
-        return 0;
     }
   };
 

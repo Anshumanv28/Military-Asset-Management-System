@@ -12,7 +12,6 @@ import {
   TableRow,
   TablePagination,
   IconButton,
-  Chip,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -34,9 +33,7 @@ import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  Visibility as ViewIcon,
   FilterList as FilterIcon,
-  LocalShipping as ConsumeIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';

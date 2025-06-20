@@ -36,8 +36,6 @@ import {
   FilterList as FilterIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
-import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
 
@@ -238,23 +236,17 @@ const Assets: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'available': return 'success';
-      case 'assigned': return 'info';
-      case 'maintenance': return 'warning';
-      case 'retired': return 'error';
-      default: return 'default';
+      case 'available':
+        return 'success';
+      case 'assigned':
+        return 'warning';
+      case 'maintenance':
+        return 'info';
+      case 'retired':
+        return 'error';
+      default:
+        return 'default';
     }
-  };
-
-  const formatCurrency = (value: any): string => {
-    if (value === null || value === undefined || value === '') {
-      return '$0';
-    }
-    const numValue = typeof value === 'string' ? parseFloat(value) : value;
-    if (isNaN(numValue)) {
-      return '$0';
-    }
-    return `$${numValue.toLocaleString()}`;
   };
 
   if (loading) {

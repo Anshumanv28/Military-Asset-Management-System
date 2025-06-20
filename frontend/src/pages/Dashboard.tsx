@@ -14,6 +14,16 @@ import {
   Select,
   MenuItem,
   Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
 } from '@mui/material';
 import {
   TrendingUp,
@@ -23,7 +33,6 @@ import {
   SwapHoriz,
   Assignment,
   RemoveCircle,
-  Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
@@ -45,6 +54,22 @@ interface DashboardMetrics {
 interface Base {
   id: string;
   name: string;
+  code: string;
+}
+
+interface AssetType {
+  id: string;
+  name: string;
+}
+
+interface MovementDetail {
+  id: string;
+  asset_type_name: string;
+  quantity: number;
+  date: string;
+  base_name?: string;
+  from_base_name?: string;
+  to_base_name?: string;
 }
 
 const Dashboard: React.FC = () => {
@@ -55,12 +80,21 @@ const Dashboard: React.FC = () => {
   const [selectedBase, setSelectedBase] = useState('');
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
+  const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
+  const [selectedAssetType, setSelectedAssetType] = useState('');
+  const [showMovementDetails, setShowMovementDetails] = useState(false);
+  const [movementDetails, setMovementDetails] = useState<{
+    purchases: MovementDetail[];
+    transfers_in: MovementDetail[];
+    transfers_out: MovementDetail[];
+  }>({ purchases: [], transfers_in: [], transfers_out: [] });
   const { user } = useAuth();
 
   // Applied filter states (used for actual API calls)
   const [appliedBase, setAppliedBase] = useState('');
   const [appliedStartDate, setAppliedStartDate] = useState<Date | null>(null);
   const [appliedEndDate, setAppliedEndDate] = useState<Date | null>(null);
+  const [appliedAssetType, setAppliedAssetType] = useState('');
 
   const fetchMetrics = useCallback(async () => {
     setLoading(true);
@@ -69,6 +103,7 @@ const Dashboard: React.FC = () => {
       if (appliedBase) params.append('base_id', appliedBase);
       if (appliedStartDate) params.append('start_date', appliedStartDate.toISOString().split('T')[0]);
       if (appliedEndDate) params.append('end_date', appliedEndDate.toISOString().split('T')[0]);
+      if (appliedAssetType) params.append('asset_type_id', appliedAssetType);
 
       const response = await axios.get(`${process.env.REACT_APP_API_URL}/dashboard/summary`, { params });
       setMetrics(response.data.data);
@@ -77,7 +112,22 @@ const Dashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [appliedBase, appliedStartDate, appliedEndDate]);
+  }, [appliedBase, appliedStartDate, appliedEndDate, appliedAssetType]);
+
+  const fetchMovementDetails = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (appliedBase) params.append('base_id', appliedBase);
+      if (appliedStartDate) params.append('start_date', appliedStartDate.toISOString().split('T')[0]);
+      if (appliedEndDate) params.append('end_date', appliedEndDate.toISOString().split('T')[0]);
+      if (appliedAssetType) params.append('asset_type_id', appliedAssetType);
+
+      const response = await axios.get(`${process.env.REACT_APP_API_URL}/dashboard/movements`, { params });
+      setMovementDetails(response.data.data);
+    } catch (err: any) {
+      console.error('Failed to fetch movement details:', err);
+    }
+  };
 
   useEffect(() => {
     const fetchBases = async () => {
@@ -89,7 +139,17 @@ const Dashboard: React.FC = () => {
       }
     };
 
+    const fetchAssetTypes = async () => {
+      try {
+        const response = await axios.get(`${process.env.REACT_APP_API_URL}/asset-types`);
+        setAssetTypes(response.data.data);
+      } catch (err) {
+        console.error("Failed to fetch asset types");
+      }
+    };
+
     fetchMetrics();
+    fetchAssetTypes();
     if(user?.role === 'admin') {
       fetchBases();
     }
@@ -99,20 +159,24 @@ const Dashboard: React.FC = () => {
     setAppliedBase(selectedBase);
     setAppliedStartDate(startDate);
     setAppliedEndDate(endDate);
+    setAppliedAssetType(selectedAssetType);
   }
 
   const handleClearFilters = () => {
     setSelectedBase('');
     setStartDate(null);
     setEndDate(null);
+    setSelectedAssetType('');
     setAppliedBase('');
     setAppliedStartDate(null);
     setAppliedEndDate(null);
+    setAppliedAssetType('');
   }
 
-  const handleRefresh = () => {
-    fetchMetrics();
-  }
+  const handleNetMovementClick = async () => {
+    await fetchMovementDetails();
+    setShowMovementDetails(true);
+  };
 
   if (loading) {
     return (
@@ -147,8 +211,9 @@ const Dashboard: React.FC = () => {
     icon: React.ReactNode;
     color: string;
     trend?: 'up' | 'down' | 'neutral';
-  }> = ({ title, value, icon, color, trend }) => (
-    <Card sx={{ height: '100%' }}>
+    onClick?: () => void;
+  }> = ({ title, value, icon, color, trend, onClick }) => (
+    <Card sx={{ height: '100%', cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
       <CardContent>
         <Box display="flex" alignItems="center" justifyContent="space-between">
           <Box>
@@ -196,7 +261,6 @@ const Dashboard: React.FC = () => {
         </Typography>
         <Button
           variant="outlined"
-          startIcon={<RefreshIcon />}
           onClick={fetchMetrics}
           disabled={loading}
         >
@@ -210,7 +274,7 @@ const Dashboard: React.FC = () => {
           <Typography variant="h6" gutterBottom>Filters</Typography>
           <Grid container spacing={2} alignItems="center">
             {user?.role === 'admin' && (
-              <Grid item xs={12} sm={4}>
+              <Grid item xs={12} sm={3}>
                 <FormControl fullWidth>
                   <InputLabel id="base-select-label">Base</InputLabel>
                   <Select
@@ -229,15 +293,35 @@ const Dashboard: React.FC = () => {
                 </FormControl>
               </Grid>
             )}
+            
+            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
+              <FormControl fullWidth>
+                <InputLabel id="asset-type-select-label">Equipment Type</InputLabel>
+                <Select
+                  labelId="asset-type-select-label"
+                  value={selectedAssetType}
+                  label="Equipment Type"
+                  onChange={(e) => setSelectedAssetType(e.target.value)}
+                >
+                  <MenuItem value="">
+                    <em>All Equipment Types</em>
+                  </MenuItem>
+                  {assetTypes.map((assetType) => (
+                    <MenuItem key={assetType.id} value={assetType.id}>{assetType.name}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            
             <LocalizationProvider dateAdapter={AdapterDateFns}>
-              <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
+              <Grid item xs={12} sm={user?.role === 'admin' ? 2 : 3}>
                 <DatePicker
                   label="Start Date"
                   value={startDate}
                   onChange={(newValue) => setStartDate(newValue)}
                 />
               </Grid>
-              <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
+              <Grid item xs={12} sm={user?.role === 'admin' ? 2 : 3}>
                 <DatePicker
                   label="End Date"
                   value={endDate}
@@ -245,10 +329,10 @@ const Dashboard: React.FC = () => {
                 />
               </Grid>
             </LocalizationProvider>
-            <Grid item xs={12} sm={2}>
+            <Grid item xs={12} sm={1}>
               <Button variant="contained" onClick={handleFilterSubmit} fullWidth>Apply</Button>
             </Grid>
-            <Grid item xs={12} sm={2}>
+            <Grid item xs={12} sm={1}>
                <Button variant="outlined" onClick={handleClearFilters} fullWidth>Clear</Button>
             </Grid>
           </Grid>
@@ -281,6 +365,7 @@ const Dashboard: React.FC = () => {
             icon={<SwapHoriz sx={{ color: 'white' }} />}
             color="#3b82f6"
             trend={metrics.net_movement > 0 ? 'up' : 'down'}
+            onClick={handleNetMovementClick}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -346,7 +431,7 @@ const Dashboard: React.FC = () => {
       </Paper>
 
       {/* Summary */}
-      <Box sx={{ mt: 3 }}>
+      <Box sx={{ mt: 4 }}>
         <Paper sx={{ p: 3 }}>
           <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
             Summary
@@ -380,6 +465,98 @@ const Dashboard: React.FC = () => {
           </Grid>
         </Paper>
       </Box>
+
+      {/* Movement Details Dialog */}
+      <Dialog 
+        open={showMovementDetails} 
+        onClose={() => setShowMovementDetails(false)}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>Net Movement Details</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 2 }}>
+            <Typography variant="h6" gutterBottom>Purchases</Typography>
+            <TableContainer component={Paper} sx={{ mb: 3 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Asset Type</TableCell>
+                    <TableCell>Quantity</TableCell>
+                    <TableCell>Date</TableCell>
+                    <TableCell>Base</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {movementDetails.purchases.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>{item.asset_type_name}</TableCell>
+                      <TableCell>{item.quantity}</TableCell>
+                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
+                      <TableCell>{item.base_name}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            <Typography variant="h6" gutterBottom>Transfers In</Typography>
+            <TableContainer component={Paper} sx={{ mb: 3 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Asset Type</TableCell>
+                    <TableCell>Quantity</TableCell>
+                    <TableCell>Date</TableCell>
+                    <TableCell>From Base</TableCell>
+                    <TableCell>To Base</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {movementDetails.transfers_in.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>{item.asset_type_name}</TableCell>
+                      <TableCell>{item.quantity}</TableCell>
+                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
+                      <TableCell>{item.from_base_name}</TableCell>
+                      <TableCell>{item.to_base_name}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+
+            <Typography variant="h6" gutterBottom>Transfers Out</Typography>
+            <TableContainer component={Paper}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Asset Type</TableCell>
+                    <TableCell>Quantity</TableCell>
+                    <TableCell>Date</TableCell>
+                    <TableCell>From Base</TableCell>
+                    <TableCell>To Base</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {movementDetails.transfers_out.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>{item.asset_type_name}</TableCell>
+                      <TableCell>{item.quantity}</TableCell>
+                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
+                      <TableCell>{item.from_base_name}</TableCell>
+                      <TableCell>{item.to_base_name}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowMovementDetails(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: military_assets_db
+    environment:
+      POSTGRES_DB: military_assets_prod
+      POSTGRES_USER: military_user
+      POSTGRES_PASSWORD: secure_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - military_network
+    restart: unless-stopped
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: production
+    container_name: military_assets_backend
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://military_user:secure_password@postgres:5432/military_assets_prod
+      JWT_SECRET: your-super-secure-jwt-secret-key-change-this-in-production
+      PORT: 3001
+      CORS_ORIGIN: http://localhost:3000
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+    networks:
+      - military_network
+    restart: unless-stopped
+    volumes:
+      - ./backend/logs:/app/logs
+
+  # Frontend React App
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NODE_ENV: production
+    container_name: military_assets_frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:3001/api
+      REACT_APP_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - military_network
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (Optional)
+  nginx:
+    image: nginx:alpine
+    container_name: military_assets_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - military_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  military_network:
+    driver: bridge 

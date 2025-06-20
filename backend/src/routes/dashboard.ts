@@ -98,7 +98,7 @@ router.get('/metrics', authenticate, async (req: Request, res: Response) => {
 // @access  Private
 router.get('/movements', authenticate, async (req: Request, res: Response) => {
   try {
-    const { start_date, end_date, base_id } = req.query;
+    const { start_date, end_date, base_id, asset_type_id } = req.query;
     
     // Build filters
     const dateFilter = start_date && end_date 
@@ -113,16 +113,19 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
       baseFilter = `AND base_id = $${paramOffset + 1}`;
     }
 
+    const assetTypeFilter = asset_type_id ? 
+      `AND asset_type_id = $${paramOffset + (base_id ? 2 : 1)}` : '';
+
     // Get purchases
     const purchasesQuery = `
       SELECT p.*, at.name as asset_type_name, b.name as base_name
       FROM purchases p
       JOIN asset_types at ON p.asset_type_id = at.id
       JOIN bases b ON p.base_id = b.id
-      WHERE 1=1 ${dateFilter} ${baseFilter}
+      WHERE 1=1 ${dateFilter} ${baseFilter} ${assetTypeFilter}
       ORDER BY p.purchase_date DESC
     `;
-    const purchasesResult = await query(purchasesQuery, [...dateParams, ...(base_id ? [base_id] : [])]);
+    const purchasesResult = await query(purchasesQuery, [...dateParams, ...(base_id ? [base_id] : []), ...(asset_type_id ? [asset_type_id] : [])]);
 
     // Get transfers in
     const transfersInQuery = `
@@ -133,10 +136,10 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
       JOIN bases fb ON t.from_base_id = fb.id
       JOIN bases tb ON t.to_base_id = tb.id
       WHERE t.status = 'completed' ${dateFilter} 
-      AND t.to_base_id = $${paramOffset + 1} ${baseFilter}
+      AND t.to_base_id = $${paramOffset + 1} ${baseFilter} ${assetTypeFilter}
       ORDER BY t.transfer_date DESC
     `;
-    const transfersInResult = await query(transfersInQuery, [...dateParams, base_id || req.user!.base_id, ...(base_id ? [base_id] : [])]);
+    const transfersInResult = await query(transfersInQuery, [...dateParams, base_id || req.user!.base_id, ...(base_id ? [base_id] : []), ...(asset_type_id ? [asset_type_id] : [])]);
 
     // Get transfers out
     const transfersOutQuery = `
@@ -147,10 +150,10 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
       JOIN bases fb ON t.from_base_id = fb.id
       JOIN bases tb ON t.to_base_id = tb.id
       WHERE t.status = 'completed' ${dateFilter} 
-      AND t.from_base_id = $${paramOffset + 1} ${baseFilter}
+      AND t.from_base_id = $${paramOffset + 1} ${baseFilter} ${assetTypeFilter}
       ORDER BY t.transfer_date DESC
     `;
-    const transfersOutResult = await query(transfersOutQuery, [...dateParams, base_id || req.user!.base_id, ...(base_id ? [base_id] : [])]);
+    const transfersOutResult = await query(transfersOutQuery, [...dateParams, base_id || req.user!.base_id, ...(base_id ? [base_id] : []), ...(asset_type_id ? [asset_type_id] : [])]);
 
     res.json({
       success: true,
@@ -235,7 +238,7 @@ router.get('/balances', authenticate, async (req: Request, res: Response) => {
 // @access  Private
 router.get('/summary', authenticate, async (req: Request, res: Response) => {
   try {
-    const { base_id, start_date, end_date } = req.query as { [key: string]: string };
+    const { base_id, start_date, end_date, asset_type_id } = req.query as { [key: string]: string };
     const { role, base_id: user_base_id } = req.user!;
 
     const targetBaseId = (role === 'admin' && base_id) ? base_id : user_base_id;
@@ -244,15 +247,28 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
     if (start_date && end_date) {
       queryParams.push(start_date, end_date);
     }
+    if (asset_type_id) {
+      queryParams.push(asset_type_id);
+    }
 
     const dateFilter = (dateCol: string) => 
       !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $2 AND $3`;
+    
+    const assetTypeFilter = asset_type_id ? 
+      `AND asset_type_id = $${queryParams.length}` : '';
 
-    const purchasesQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM purchases WHERE base_id = $1 ${dateFilter('purchase_date')}`;
-    const expendedQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM expenditures WHERE base_id = $1 ${dateFilter('expenditure_date')}`;
-    const assignmentsQuery = `SELECT COALESCE(COUNT(*), 0) AS count FROM assignments WHERE status = 'active' AND base_id = $1 ${dateFilter('assignment_date')}`;
-    const transfersInQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM transfers WHERE status = 'completed' AND to_base_id = $1 ${dateFilter('transfer_date')}`;
-    const transfersOutQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM transfers WHERE status = 'completed' AND from_base_id = $1 ${dateFilter('transfer_date')}`;
+    const purchasesQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM purchases WHERE base_id = $1 ${dateFilter('purchase_date')} ${assetTypeFilter}`;
+    const expendedQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM expenditures WHERE base_id = $1 ${dateFilter('expenditure_date')} ${assetTypeFilter}`;
+    
+    // For assignments, we need to join through assets table to get asset_type_id
+    const assignmentsQuery = asset_type_id ? 
+      `SELECT COALESCE(COUNT(*), 0) AS count FROM assignments a 
+       JOIN assets ast ON a.asset_id = ast.id 
+       WHERE a.status = 'active' AND a.base_id = $1 ${dateFilter('a.assignment_date')} AND ast.asset_type_id = $${queryParams.length}` :
+      `SELECT COALESCE(COUNT(*), 0) AS count FROM assignments WHERE status = 'active' AND base_id = $1 ${dateFilter('assignment_date')}`;
+    
+    const transfersInQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM transfers WHERE status = 'completed' AND to_base_id = $1 ${dateFilter('transfer_date')} ${assetTypeFilter}`;
+    const transfersOutQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM transfers WHERE status = 'completed' AND from_base_id = $1 ${dateFilter('transfer_date')} ${assetTypeFilter}`;
 
     const [
       purchasesRes,

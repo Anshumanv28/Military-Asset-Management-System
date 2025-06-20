@@ -257,6 +257,58 @@ const seedDatabase = async () => {
       }
     }
 
+    // Create test users for RBAC
+    const testUsers = [
+      {
+        username: 'commander1',
+        email: 'commander1@military.gov',
+        password: 'password123',
+        first_name: 'John',
+        last_name: 'Commander',
+        role: 'base_commander',
+        base_id: baseIds[0] // Fort Bragg
+      },
+      {
+        username: 'logistics1',
+        email: 'logistics1@military.gov',
+        password: 'password123',
+        first_name: 'Sarah',
+        last_name: 'Logistics',
+        role: 'logistics_officer',
+        base_id: baseIds[2] // Fort Hood
+      },
+      {
+        username: 'commander2',
+        email: 'commander2@military.gov',
+        password: 'password123',
+        first_name: 'Mike',
+        last_name: 'Commander',
+        role: 'base_commander',
+        base_id: baseIds[3] // Joint Base Lewis-McChord
+      }
+    ];
+
+    for (const userData of testUsers) {
+      const hashedPassword = await bcrypt.hash(userData.password, 10);
+      await query(`
+        INSERT INTO users (username, email, password_hash, first_name, last_name, role, base_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (username) DO UPDATE SET 
+          email = EXCLUDED.email,
+          password_hash = EXCLUDED.password_hash,
+          first_name = EXCLUDED.first_name,
+          last_name = EXCLUDED.last_name,
+          role = EXCLUDED.role,
+          base_id = EXCLUDED.base_id
+      `, [userData.username, userData.email, hashedPassword, userData.first_name, userData.last_name, userData.role, userData.base_id]);
+    }
+
+    logger.info('✅ Test users created successfully');
+    logger.info('   - Admin: admin / admin123');
+    logger.info('   - Base Commander 1: commander1 / password123 (Fort Bragg)');
+    logger.info('   - Logistics Officer: logistics1 / password123 (Fort Hood)');
+    logger.info('   - Base Commander 2: commander2 / password123 (Joint Base Lewis-McChord)');
+
     logger.info('✅ Database seeding completed successfully');
     logger.info('📋 Sample data created:');
     logger.info('   - Admin user: admin / admin123');
