@@ -10,7 +10,7 @@ const router = Router();
 // @access  Private
 router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const { base_id, status, page = 1, limit = 10 } = req.query;
+    const { base_id, status, assigned_to, page = 1, limit = 10 } = req.query;
     
     let whereConditions = ['1=1'];
     const params: any[] = [];
@@ -30,6 +30,12 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
       params.push(status);
     }
 
+    // Add filter for assigned_to, cast param to text
+    if (assigned_to) {
+      whereConditions.push(`a.assigned_to = $${paramIndex++}::text`);
+      params.push(assigned_to);
+    }
+
     const whereClause = whereConditions.join(' AND ');
 
     // Get total count
@@ -44,7 +50,8 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     // Get paginated results
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
     const assignmentsQuery = `
-      SELECT a.*, ast.name as asset_name, ast.serial_number, at.name as asset_type_name, b.name as base_name,
+      SELECT a.*, ast.name as asset_name, ast.serial_number, ast.quantity as asset_quantity, ast.available_quantity as asset_available_quantity,
+             at.name as asset_type_name, b.name as base_name,
              CONCAT(p.first_name, ' ', p.last_name) as personnel_name, p.rank as personnel_rank,
              CONCAT(u.first_name, ' ', u.last_name) as assigned_by_name
       FROM assignments a
@@ -83,13 +90,21 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 // @access  Private (Admin, Base Commander, Logistics Officer)
 router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
   try {
-    const { asset_id, assigned_to, base_id, assignment_date, notes } = req.body;
+    const { asset_id, assigned_to, base_id, assignment_date, quantity = 1, notes } = req.body;
 
     // Validate required fields
     if (!asset_id || !assigned_to || !base_id || !assignment_date) {
       return res.status(400).json({
         success: false,
         error: 'Asset ID, assigned_to, base ID, and assignment date are required'
+      });
+    }
+
+    // Validate quantity
+    if (quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Quantity must be greater than 0'
       });
     }
 
@@ -101,7 +116,7 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
       });
     }
 
-    // Check if asset exists and is available
+    // Check if asset exists and has sufficient available quantity
     const assetResult = await query(
       'SELECT * FROM assets WHERE id = $1',
       [asset_id]
@@ -115,16 +130,29 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
     }
 
     const asset = assetResult.rows[0];
-    if (asset.status !== 'available') {
+    if (asset.available_quantity < quantity) {
       return res.status(400).json({
         success: false,
-        error: 'Asset is not available for assignment'
+        error: `Insufficient available quantity. Available: ${asset.available_quantity}, Requested: ${quantity}`
+      });
+    }
+
+    // Check if personnel exists
+    const personnelResult = await query(
+      'SELECT * FROM personnel WHERE id = $1',
+      [assigned_to]
+    );
+
+    if (personnelResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Personnel not found'
       });
     }
 
     const createQuery = `
-      INSERT INTO assignments (asset_id, assigned_to, assigned_by, base_id, assignment_date, notes)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO assignments (asset_id, assigned_to, assigned_by, base_id, assignment_date, quantity, notes)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *
     `;
     const result = await query(createQuery, [
@@ -133,16 +161,26 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
       req.user!.user_id,
       base_id,
       assignment_date,
+      quantity,
       notes || null
     ]);
 
     const newAssignment = result.rows[0];
 
-    // Update asset status to assigned
+    // Update asset available quantity
+    const newAvailableQuantity = asset.available_quantity - quantity;
     await query(
-      'UPDATE assets SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      ['assigned', asset_id]
+      'UPDATE assets SET available_quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [newAvailableQuantity, asset_id]
     );
+
+    // Update asset status if no more available quantity
+    if (newAvailableQuantity === 0) {
+      await query(
+        'UPDATE assets SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        ['assigned', asset_id]
+      );
+    }
 
     // Log assignment creation
     logger.info({
@@ -150,7 +188,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
       user_id: req.user!.user_id,
       assignment_id: newAssignment.id,
       asset_id,
-      assigned_to
+      assigned_to,
+      quantity
     });
 
     return res.status(201).json({
@@ -167,16 +206,16 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
 });
 
 // @route   PUT /api/assignments/:id/return
-// @desc    Return assigned asset
+// @desc    Return assigned asset (full or partial)
 // @access  Private (Admin, Base Commander, Logistics Officer)
 router.put('/:id/return', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { return_date, notes } = req.body;
+    const { return_date, return_quantity, notes } = req.body;
 
     // Check if assignment exists
     const assignmentResult = await query(
-      'SELECT * FROM assignments WHERE id = $1',
+      'SELECT a.*, ast.available_quantity as asset_available_quantity, ast.quantity as asset_total_quantity FROM assignments a JOIN assets ast ON a.asset_id = ast.id WHERE a.id = $1',
       [id]
     );
 
@@ -212,30 +251,75 @@ router.put('/:id/return', authenticate, authorize('admin', 'base_commander', 'lo
       });
     }
 
+    // Determine return quantity
+    const remainingAssigned = assignment.quantity - assignment.returned_quantity;
+    const actualReturnQuantity = return_quantity || remainingAssigned;
+
+    // Validate return quantity
+    if (actualReturnQuantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Return quantity must be greater than 0'
+      });
+    }
+
+    if (actualReturnQuantity > remainingAssigned) {
+      return res.status(400).json({
+        success: false,
+        error: `Cannot return more than assigned. Remaining assigned: ${remainingAssigned}, Requested return: ${actualReturnQuantity}`
+      });
+    }
+
+    // Calculate new returned quantity
+    const newReturnedQuantity = assignment.returned_quantity + actualReturnQuantity;
+    const newRemainingAssigned = assignment.quantity - newReturnedQuantity;
+
+    // Determine new status
+    let newStatus = assignment.status;
+    if (newRemainingAssigned === 0) {
+      newStatus = 'returned';
+    } else if (newReturnedQuantity > 0) {
+      newStatus = 'partially_returned';
+    }
+
     const updateQuery = `
       UPDATE assignments 
-      SET status = 'returned', return_date = $1, notes = COALESCE($2, notes), updated_at = CURRENT_TIMESTAMP
-      WHERE id = $3
+      SET status = $1, return_date = $2, returned_quantity = $3, notes = COALESCE($4, notes), updated_at = CURRENT_TIMESTAMP
+      WHERE id = $5
       RETURNING *
     `;
     const result = await query(updateQuery, [
+      newStatus,
       return_date || new Date().toISOString().split('T')[0],
+      newReturnedQuantity,
       notes,
       id
     ]);
 
-    // Update asset status to available
+    // Update asset available quantity
+    const newAssetAvailableQuantity = assignment.asset_available_quantity + actualReturnQuantity;
     await query(
-      'UPDATE assets SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-      ['available', assignment.asset_id]
+      'UPDATE assets SET available_quantity = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+      [newAssetAvailableQuantity, assignment.asset_id]
     );
+
+    // Update asset status if it becomes available
+    if (newAssetAvailableQuantity > 0) {
+      await query(
+        'UPDATE assets SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        ['available', assignment.asset_id]
+      );
+    }
 
     // Log assignment return
     logger.info({
       action: 'ASSIGNMENT_RETURNED',
       user_id: req.user!.user_id,
       assignment_id: id,
-      asset_id: assignment.asset_id
+      asset_id: assignment.asset_id,
+      return_quantity: actualReturnQuantity,
+      total_returned: newReturnedQuantity,
+      remaining_assigned: newRemainingAssigned
     });
 
     return res.json({
@@ -319,8 +403,8 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander', 'logistics
 
 // @route   DELETE /api/assignments/:id
 // @desc    Delete assignment
-// @access  Private (Admin, Base Commander, Logistics Officer)
-router.delete('/:id', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
+// @access  Private (Admin, Base Commander)
+router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -344,13 +428,6 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander', 'logist
       return res.status(403).json({
         success: false,
         error: 'Base commanders can only delete assignments from their base'
-      });
-    }
-
-    if (req.user!.role === 'logistics_officer' && assignment.base_id !== req.user!.base_id) {
-      return res.status(403).json({
-        success: false,
-        error: 'Logistics officers can only delete assignments from their base'
       });
     }
 

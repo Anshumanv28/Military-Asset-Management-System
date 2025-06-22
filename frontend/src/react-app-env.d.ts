@@ -6,6 +6,10 @@ declare global {
       REACT_APP_API_URL: string;
     }
   }
+  
+  var process: {
+    env: NodeJS.ProcessEnv;
+  };
 }
 
 export {}; 

@@ -492,6 +492,7 @@ const Transfers: React.FC = () => {
                       onClick={() => handleDeleteTransfer(transfer.id)}
                       color="error"
                       title="Delete"
+                      disabled={user?.role === 'logistics_officer'}
                     >
                       <DeleteIcon />
                     </IconButton>

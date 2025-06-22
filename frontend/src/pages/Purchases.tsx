@@ -465,12 +465,17 @@ const Purchases: React.FC = () => {
                   <IconButton
                     size="small"
                     onClick={() => handleOpenDialog(purchase)}
+                    color="primary"
+                    title="Edit"
                   >
                     <EditIcon />
                   </IconButton>
                   <IconButton
                     size="small"
                     onClick={() => handleDelete(purchase.id)}
+                    color="error"
+                    title="Delete"
+                    disabled={user?.role === 'logistics_officer'}
                   >
                     <DeleteIcon />
                   </IconButton>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -52,6 +52,8 @@ interface Asset {
   purchase_date: string;
   purchase_cost?: number | null;
   current_value?: number | null;
+  quantity: number;
+  available_quantity: number;
   created_at: string;
   updated_at: string;
 }
@@ -77,7 +79,7 @@ interface CreateAssetForm {
   current_base_id: string;
   purchase_date: string;
   purchase_cost: number;
-  current_value: number;
+  quantity: number;
 }
 
 const Assets: React.FC = () => {
@@ -100,7 +102,7 @@ const Assets: React.FC = () => {
     current_base_id: '',
     purchase_date: '',
     purchase_cost: 0,
-    current_value: 0,
+    quantity: 1,
   });
 
   // Client-side filters
@@ -110,6 +112,18 @@ const Assets: React.FC = () => {
     status: '',
     serial_number: '',
   });
+
+  // Debounced search for serial number
+  const [debouncedSerialNumber, setDebouncedSerialNumber] = useState('');
+
+  // Debounce serial number search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSerialNumber(filters.serial_number);
+    }, 300); // 300ms delay
+
+    return () => clearTimeout(timer);
+  }, [filters.serial_number]);
 
   // Fetch all assets once
   const fetchAllAssets = async () => {
@@ -154,10 +168,10 @@ const Assets: React.FC = () => {
       if (filters.asset_type_id && asset.asset_type_id !== filters.asset_type_id) return false;
       if (filters.current_base_id && asset.current_base_id !== filters.current_base_id) return false;
       if (filters.status && asset.status !== filters.status) return false;
-      if (filters.serial_number && !asset.serial_number.toLowerCase().includes(filters.serial_number.toLowerCase())) return false;
+      if (debouncedSerialNumber && !asset.serial_number.toLowerCase().includes(debouncedSerialNumber.toLowerCase())) return false;
       return true;
     });
-  }, [allAssets, filters]);
+  }, [allAssets, filters.asset_type_id, filters.current_base_id, filters.status, debouncedSerialNumber]);
 
   // Pagination
   const paginatedAssets = useMemo(() => {
@@ -176,7 +190,7 @@ const Assets: React.FC = () => {
         current_base_id: asset.current_base_id,
         purchase_date: asset.purchase_date,
         purchase_cost: asset.purchase_cost || 0,
-        current_value: asset.current_value || 0,
+        quantity: asset.quantity,
       });
     } else {
       setEditingAsset(null);
@@ -188,7 +202,7 @@ const Assets: React.FC = () => {
         current_base_id: '',
         purchase_date: '',
         purchase_cost: 0,
-        current_value: 0,
+        quantity: 1,
       });
     }
     setOpenDialog(true);
@@ -376,6 +390,8 @@ const Assets: React.FC = () => {
               <TableCell>Type</TableCell>
               <TableCell>Base</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell>Quantity</TableCell>
+              <TableCell>Available</TableCell>
               <TableCell>Purchase Cost</TableCell>
               <TableCell>Current Value</TableCell>
               <TableCell>Actions</TableCell>
@@ -395,6 +411,8 @@ const Assets: React.FC = () => {
                     size="small"
                   />
                 </TableCell>
+                <TableCell>{asset.quantity}</TableCell>
+                <TableCell>{asset.available_quantity}</TableCell>
                 <TableCell>
                   {asset.purchase_cost !== null && asset.purchase_cost !== undefined 
                     ? `$${Number(asset.purchase_cost).toLocaleString()}` 
@@ -526,10 +544,11 @@ const Assets: React.FC = () => {
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Current Value"
+                label="Quantity"
                 type="number"
-                value={formData.current_value}
-                onChange={(e) => setFormData({ ...formData, current_value: parseFloat(e.target.value) || 0 })}
+                value={formData.quantity}
+                onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) || 1 })}
+                inputProps={{ min: 1 }}
               />
             </Grid>
           </Grid>

@@ -128,13 +128,21 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
 // @access  Private (Admin, Base Commander)
 router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
-    const { asset_type_id, serial_number, name, description, current_base_id, purchase_date, purchase_cost } = req.body;
+    const { asset_type_id, serial_number, name, description, current_base_id, purchase_date, purchase_cost, quantity = 1 } = req.body;
 
     // Validate required fields
     if (!asset_type_id || !name) {
       return res.status(400).json({
         success: false,
         error: 'Asset type ID and name are required'
+      });
+    }
+
+    // Validate quantity
+    if (quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Quantity must be greater than 0'
       });
     }
 
@@ -157,8 +165,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
     const baseId = req.user!.role === 'base_commander' ? req.user!.base_id : current_base_id;
 
     const createQuery = `
-      INSERT INTO assets (asset_type_id, serial_number, name, description, current_base_id, purchase_date, purchase_cost, current_value)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+      INSERT INTO assets (asset_type_id, serial_number, name, description, current_base_id, purchase_date, purchase_cost, current_value, quantity, available_quantity)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $8)
       RETURNING *
     `;
     const result = await query(createQuery, [
@@ -168,7 +176,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       description || null,
       baseId,
       purchase_date || null,
-      purchase_cost || null
+      purchase_cost || null,
+      quantity
     ]);
 
     const newAsset = result.rows[0];
@@ -178,7 +187,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       action: 'ASSET_CREATED',
       user_id: req.user!.user_id,
       asset_id: newAsset.id,
-      asset_name: newAsset.name
+      asset_name: newAsset.name,
+      quantity
     });
 
     if (!newAsset) {

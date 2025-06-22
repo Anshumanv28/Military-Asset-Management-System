@@ -374,6 +374,7 @@ const Expenditures: React.FC = () => {
                       onClick={() => handleDeleteExpenditure(expenditure.id)}
                       color="error"
                       title="Delete"
+                      disabled={user?.role === 'logistics_officer'}
                     >
                       <DeleteIcon />
                     </IconButton>

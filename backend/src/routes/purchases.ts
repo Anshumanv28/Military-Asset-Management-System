@@ -395,8 +395,8 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander', 'logistics
 
 // @route   DELETE /api/purchases/:id
 // @desc    Delete purchase
-// @access  Private (Admin, Base Commander, Logistics Officer)
-router.delete('/:id', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
+// @access  Private (Admin, Base Commander)
+router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -420,13 +420,6 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander', 'logist
       return res.status(403).json({
         success: false,
         error: 'Base commanders can only delete purchases for their base'
-      });
-    }
-
-    if (req.user!.role === 'logistics_officer' && purchase.base_id !== req.user!.base_id) {
-      return res.status(403).json({
-        success: false,
-        error: 'Logistics officers can only delete purchases for their base'
       });
     }
 
