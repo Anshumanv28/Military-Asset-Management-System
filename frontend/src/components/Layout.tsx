@@ -41,7 +41,6 @@ const menuItems = [
   { text: 'Transfers', icon: <TransfersIcon />, path: '/transfers' },
   { text: 'Assignments', icon: <AssignmentsIcon />, path: '/assignments' },
   { text: 'Expenditures', icon: <ExpendituresIcon />, path: '/expenditures' },
-  { text: 'Bases', icon: <BasesIcon />, path: '/bases' },
 ];
 
 const Layout: React.FC = () => {

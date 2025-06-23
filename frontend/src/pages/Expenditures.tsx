@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
-  Paper,
   Button,
   Table,
   TableBody,
@@ -11,7 +10,7 @@ import {
   TableHead,
   TableRow,
   TablePagination,
-  IconButton,
+  Paper,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -21,20 +20,22 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Grid,
+  IconButton,
   Alert,
-  CircularProgress,
   Card,
   CardContent,
+  Grid,
+  CircularProgress
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  FilterList as FilterIcon,
+  FilterList as FilterIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import FilterBar from '../components/FilterBar.tsx';
 
 interface Expenditure {
   id: string;
@@ -42,6 +43,10 @@ interface Expenditure {
   asset_type_name: string;
   base_id: string;
   base_name: string;
+  personnel_id?: string;
+  personnel_first_name?: string;
+  personnel_last_name?: string;
+  personnel_rank?: string;
   quantity: number;
   unit_cost: number;
   total_cost: number;
@@ -235,6 +240,21 @@ const Expenditures: React.FC = () => {
     return new Date(dateString).toLocaleDateString();
   };
 
+  const handleFiltersChange = (filters: {
+    base_id: string;
+    asset_type_id: string;
+    start_date: Date | null;
+    end_date: Date | null;
+  }) => {
+    setFilters({
+      base_id: filters.base_id || '',
+      asset_type_id: filters.asset_type_id || '',
+      start_date: filters.start_date ? filters.start_date.toISOString().split('T')[0] : '',
+      end_date: filters.end_date ? filters.end_date.toISOString().split('T')[0] : ''
+    });
+    setPage(0); // Reset to first page when filters change
+  };
+
   if (loading && expenditures.length === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -262,64 +282,15 @@ const Expenditures: React.FC = () => {
             <FilterIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
             Filters
           </Typography>
-          <Grid container spacing={2}>
-            {user?.role === 'admin' && (
-              <Grid item xs={12} sm={3}>
-                <FormControl fullWidth>
-                  <InputLabel>Base</InputLabel>
-                  <Select
-                    value={filters.base_id}
-                    label="Base"
-                    onChange={(e) => setFilters({ ...filters, base_id: e.target.value })}
-                  >
-                    <MenuItem value="">All Bases</MenuItem>
-                    {bases.map((base) => (
-                      <MenuItem key={base.id} value={base.id}>
-                        {base.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-            )}
-            <Grid item xs={12} sm={3}>
-              <FormControl fullWidth>
-                <InputLabel>Asset Type</InputLabel>
-                <Select
-                  value={filters.asset_type_id}
-                  label="Asset Type"
-                  onChange={(e) => setFilters({ ...filters, asset_type_id: e.target.value })}
-                >
-                  <MenuItem value="">All Types</MenuItem>
-                  {assetTypes.map((type) => (
-                    <MenuItem key={type.id} value={type.id}>
-                      {type.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <TextField
-                fullWidth
-                label="Start Date"
-                type="date"
-                value={filters.start_date}
-                onChange={(e) => setFilters({ ...filters, start_date: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <TextField
-                fullWidth
-                label="End Date"
-                type="date"
-                value={filters.end_date}
-                onChange={(e) => setFilters({ ...filters, end_date: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-          </Grid>
+          <FilterBar
+            onFiltersChange={handleFiltersChange}
+            title="Expenditure Filters"
+          />
+          <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+            <Typography variant="body2" sx={{ alignSelf: 'center', ml: 2 }}>
+              Showing {expenditures.length} expenditures
+            </Typography>
+          </Box>
         </CardContent>
       </Card>
 
@@ -342,6 +313,7 @@ const Expenditures: React.FC = () => {
               <TableRow>
                 <TableCell>Asset Type</TableCell>
                 <TableCell>Base</TableCell>
+                <TableCell>Personnel</TableCell>
                 <TableCell align="right">Quantity</TableCell>
                 <TableCell align="right">Unit Cost</TableCell>
                 <TableCell align="right">Total Cost</TableCell>
@@ -355,6 +327,22 @@ const Expenditures: React.FC = () => {
                 <TableRow key={expenditure.id} hover>
                   <TableCell>{expenditure.asset_type_name}</TableCell>
                   <TableCell>{expenditure.base_name}</TableCell>
+                  <TableCell>
+                    {expenditure.personnel_first_name && expenditure.personnel_last_name ? (
+                      <Box>
+                        <Typography variant="body2" fontWeight="bold">
+                          {expenditure.personnel_first_name} {expenditure.personnel_last_name}
+                        </Typography>
+                        <Typography variant="caption" color="textSecondary">
+                          {expenditure.personnel_rank}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="textSecondary">
+                        Direct expenditure
+                      </Typography>
+                    )}
+                  </TableCell>
                   <TableCell align="right">{(expenditure.quantity || 0).toLocaleString()}</TableCell>
                   <TableCell align="right">{formatCurrency(expenditure.unit_cost)}</TableCell>
                   <TableCell align="right">{formatCurrency(expenditure.total_cost)}</TableCell>

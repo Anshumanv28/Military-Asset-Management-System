@@ -10,9 +10,24 @@ import {
   Alert,
   CircularProgress,
   Container,
+  Paper,
 } from '@mui/material';
 import { Security as SecurityIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext.tsx';
+
+const adminCredentials = { username: 'admin@military.gov', password: 'admin123', role: 'Admin' };
+const commanderCredentials = [
+  { base: 'Fort Bragg', username: 'commander1@military.gov', password: 'password123', role: 'Base Commander' },
+  { base: 'Camp Pendleton', username: 'commander2@military.gov', password: 'password123', role: 'Base Commander' },
+  { base: 'Fort Hood', username: 'commander_fh@military.gov', password: 'commander_fh_2024', role: 'Base Commander' },
+  { base: 'Joint Base Lewis-McChord', username: 'commander_jblm@military.gov', password: 'commander_jblm_2024', role: 'Base Commander' },
+];
+const logisticsCredentials = [
+  { base: 'Fort Bragg', username: 'logistics1@military.gov', password: 'password123', role: 'Logistics Officer' },
+  { base: 'Camp Pendleton', username: 'logistics2@military.gov', password: 'password123', role: 'Logistics Officer' },
+  { base: 'Fort Hood', username: 'logistics_fh@military.gov', password: 'logistics_fh_2024', role: 'Logistics Officer' },
+  { base: 'Joint Base Lewis-McChord', username: 'logistics_jblm@military.gov', password: 'logistics_jblm_2024', role: 'Logistics Officer' },
+];
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -103,19 +118,26 @@ const Login: React.FC = () => {
               </Button>
             </Box>
 
-            <Box sx={{ mt: 3, textAlign: 'center' }}>
-              <Typography variant="body2" color="text.secondary">
-                Demo Credentials:
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                Admin: admin@military.gov / admin123
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Commander: commander1@military.gov / password123
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Logistics: logistics1@military.gov / password123
-              </Typography>
+            <Box mt={4}>
+              <Paper elevation={2} sx={{ p: 2 }}>
+                <Typography variant="h6" gutterBottom>Demo Login Credentials</Typography>
+                <Typography variant="subtitle1">Admin:</Typography>
+                <ul>
+                  <li><b>{adminCredentials.role}</b>: {adminCredentials.username} / {adminCredentials.password}</li>
+                </ul>
+                <Typography variant="subtitle1">Base Commanders:</Typography>
+                <ul>
+                  {commanderCredentials.map((cred, idx) => (
+                    <li key={idx}><b>{cred.base}</b>: {cred.username} / {cred.password} ({cred.role})</li>
+                  ))}
+                </ul>
+                <Typography variant="subtitle1">Logistics Officers:</Typography>
+                <ul>
+                  {logisticsCredentials.map((cred, idx) => (
+                    <li key={idx}><b>{cred.base}</b>: {cred.username} / {cred.password} ({cred.role})</li>
+                  ))}
+                </ul>
+              </Paper>
             </Box>
           </CardContent>
         </Card>

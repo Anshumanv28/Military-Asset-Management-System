@@ -288,7 +288,7 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
 
     // Check if personnel has active assignments
     const assignmentCheck = await query(
-      'SELECT COUNT(*) as count FROM assignments WHERE personnel_id = $1 AND status = $2',
+      'SELECT COUNT(*) as count FROM assignments WHERE assigned_to = $1 AND status = $2',
       [id, 'active']
     );
 

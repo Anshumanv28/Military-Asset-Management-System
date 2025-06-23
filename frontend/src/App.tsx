@@ -2,6 +2,7 @@ import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { Box, CircularProgress } from '@mui/material';
 import { AuthProvider, useAuth } from './contexts/AuthContext.tsx';
+import { DataProvider } from './contexts/DataContext.tsx';
 import Layout from './components/Layout.tsx';
 import Login from './pages/Login.tsx';
 import Dashboard from './pages/Dashboard.tsx';
@@ -10,7 +11,6 @@ import Purchases from './pages/Purchases.tsx';
 import Transfers from './pages/Transfers.tsx';
 import Assignments from './pages/Assignments.tsx';
 import Expenditures from './pages/Expenditures.tsx';
-import Bases from './pages/Bases.tsx';
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -56,17 +56,18 @@ const AppContent: React.FC = () => {
         <Route path="transfers" element={<Transfers />} />
         <Route path="assignments" element={<Assignments />} />
         <Route path="expenditures" element={<Expenditures />} />
-        <Route path="bases" element={<Bases />} />
       </Route>
     </Routes>
   );
 };
 
-// App with Auth Provider
+// App with Auth Provider and Data Provider
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <AppContent />
+      <DataProvider>
+        <AppContent />
+      </DataProvider>
     </AuthProvider>
   );
 };

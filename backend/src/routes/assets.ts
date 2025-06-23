@@ -6,7 +6,7 @@ import { logger } from '../utils/logger';
 const router = Router();
 
 // @route   GET /api/assets
-// @desc    Get all assets with filters
+// @desc    Get all assets with filters (quantity-based)
 // @access  Private
 router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
@@ -18,20 +18,20 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 
     // Apply filters based on user role
     if (req.user!.role === 'base_commander' && req.user!.base_id) {
-      whereConditions.push(`current_base_id = $${paramIndex++}`);
+      whereConditions.push(`a.base_id = $${paramIndex++}`);
       params.push(req.user!.base_id);
     } else if (base_id && req.user!.role !== 'admin') {
-      whereConditions.push(`current_base_id = $${paramIndex++}`);
+      whereConditions.push(`a.base_id = $${paramIndex++}`);
       params.push(base_id);
     }
 
     if (asset_type_id) {
-      whereConditions.push(`asset_type_id = $${paramIndex++}`);
+      whereConditions.push(`a.asset_type_id = $${paramIndex++}`);
       params.push(asset_type_id);
     }
 
     if (status) {
-      whereConditions.push(`status = $${paramIndex++}`);
+      whereConditions.push(`a.status = $${paramIndex++}`);
       params.push(status);
     }
 
@@ -49,12 +49,19 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     // Get paginated results
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
     const assetsQuery = `
-      SELECT a.*, at.name as asset_type_name, at.category, b.name as base_name
+      SELECT 
+        a.*,
+        at.name as name,
+        'N/A' as serial_number,
+        at.category,
+        at.unit_of_measure,
+        b.name as current_base_name,
+        b.code as base_code
       FROM assets a
       JOIN asset_types at ON a.asset_type_id = at.id
-      LEFT JOIN bases b ON a.current_base_id = b.id
+      JOIN bases b ON a.base_id = b.id
       WHERE ${whereClause}
-      ORDER BY a.created_at DESC
+      ORDER BY at.name, b.name
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
     `;
     const assetsResult = await query(assetsQuery, [...params, parseInt(limit as string), offset]);
@@ -86,10 +93,17 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const assetQuery = `
-      SELECT a.*, at.name as asset_type_name, at.category, b.name as base_name
+      SELECT 
+        a.*,
+        at.name as name,
+        'N/A' as serial_number,
+        at.category,
+        at.unit_of_measure,
+        b.name as current_base_name,
+        b.code as base_code
       FROM assets a
       JOIN asset_types at ON a.asset_type_id = at.id
-      LEFT JOIN bases b ON a.current_base_id = b.id
+      JOIN bases b ON a.base_id = b.id
       WHERE a.id = $1
     `;
     const assetResult = await query(assetQuery, [id]);
@@ -104,156 +118,197 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
     const asset = assetResult.rows[0];
 
     // Check access permissions
-    if (req.user!.role === 'base_commander' && asset.current_base_id !== req.user!.base_id) {
+    if (req.user!.role === 'base_commander' && asset.base_id !== req.user!.base_id) {
       return res.status(403).json({
         success: false,
         error: 'Access denied to this asset'
       });
     }
 
-    if (!asset) {
-      return res.status(404).json({ success: false, error: 'Asset not found' });
-    }
     return res.json({
       success: true,
       data: asset
     });
   } catch (error) {
+    logger.error('Get asset by ID error:', error);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
 // @route   POST /api/assets
-// @desc    Create new asset
+// @desc    Create new asset inventory entry
 // @access  Private (Admin, Base Commander)
 router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
-    const { asset_type_id, serial_number, name, description, current_base_id, purchase_date, purchase_cost, quantity = 1 } = req.body;
+    const { asset_type_id, base_id, quantity, available_quantity, assigned_quantity } = req.body;
 
     // Validate required fields
-    if (!asset_type_id || !name) {
+    if (!asset_type_id || !base_id || quantity === undefined) {
       return res.status(400).json({
         success: false,
-        error: 'Asset type ID and name are required'
+        error: 'Asset type ID, base ID, and quantity are required'
       });
     }
 
     // Validate quantity
-    if (quantity <= 0) {
+    if (quantity < 0) {
       return res.status(400).json({
         success: false,
-        error: 'Quantity must be greater than 0'
+        error: 'Quantity must be non-negative'
       });
     }
 
-    // Check if serial number already exists
-    if (serial_number) {
-      const existingAsset = await query(
-        'SELECT id FROM assets WHERE serial_number = $1',
-        [serial_number]
-      );
+    // Base commanders can only create assets for their base
+    const targetBaseId = req.user!.role === 'base_commander' ? req.user!.base_id : base_id;
 
-      if (existingAsset.rows.length > 0) {
-        return res.status(400).json({
-          success: false,
-          error: 'Serial number already exists'
-        });
-      }
+    // Check if asset type exists
+    const assetTypeCheck = await query(
+      'SELECT id FROM asset_types WHERE id = $1',
+      [asset_type_id]
+    );
+
+    if (assetTypeCheck.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Asset type not found'
+      });
     }
 
-    // Base commanders can only create assets for their base
-    const baseId = req.user!.role === 'base_commander' ? req.user!.base_id : current_base_id;
+    // Check if base exists
+    const baseCheck = await query(
+      'SELECT id FROM bases WHERE id = $1',
+      [targetBaseId]
+    );
+
+    if (baseCheck.rows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Base not found'
+      });
+    }
+
+    // Check if asset already exists for this type and base
+    const existingAsset = await query(
+      'SELECT id FROM assets WHERE asset_type_id = $1 AND base_id = $2',
+      [asset_type_id, targetBaseId]
+    );
+
+    if (existingAsset.rows.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Asset inventory already exists for this type and base'
+      });
+    }
+
+    // Set default values
+    const finalAvailableQuantity = available_quantity !== undefined ? available_quantity : quantity;
+    const finalAssignedQuantity = assigned_quantity !== undefined ? assigned_quantity : 0;
+
+    // Validate quantities
+    if (finalAvailableQuantity + finalAssignedQuantity > quantity) {
+      return res.status(400).json({
+        success: false,
+        error: 'Available + assigned quantity cannot exceed total quantity'
+      });
+    }
 
     const createQuery = `
-      INSERT INTO assets (asset_type_id, serial_number, name, description, current_base_id, purchase_date, purchase_cost, current_value, quantity, available_quantity)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, $8)
+      INSERT INTO assets (asset_type_id, base_id, quantity, available_quantity, assigned_quantity)
+      VALUES ($1, $2, $3, $4, $5)
       RETURNING *
     `;
     const result = await query(createQuery, [
       asset_type_id,
-      serial_number || null,
-      name,
-      description || null,
-      baseId,
-      purchase_date || null,
-      purchase_cost || null,
-      quantity
+      targetBaseId,
+      quantity,
+      finalAvailableQuantity,
+      finalAssignedQuantity
     ]);
 
     const newAsset = result.rows[0];
 
     // Log asset creation
     logger.info({
-      action: 'ASSET_CREATED',
+      action: 'ASSET_INVENTORY_CREATED',
       user_id: req.user!.user_id,
       asset_id: newAsset.id,
-      asset_name: newAsset.name,
+      asset_type_id,
+      base_id: targetBaseId,
       quantity
     });
 
-    if (!newAsset) {
-      return res.status(400).json({ success: false, error: 'Asset creation failed' });
-    }
     return res.status(201).json({
       success: true,
       data: newAsset
     });
   } catch (error) {
+    logger.error('Create asset error:', error);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
 // @route   PUT /api/assets/:id
-// @desc    Update asset
+// @desc    Update asset inventory
 // @access  Private (Admin, Base Commander)
 router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { name, description, current_base_id, status, current_value } = req.body;
+    const { quantity, available_quantity, assigned_quantity, status } = req.body;
 
-    // Check if asset exists
-    const existingAsset = await query(
+    // Get current asset
+    const currentAsset = await query(
       'SELECT * FROM assets WHERE id = $1',
       [id]
     );
 
-    if (existingAsset.rows.length === 0) {
+    if (currentAsset.rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Asset not found'
       });
     }
 
-    const asset = existingAsset.rows[0];
+    const asset = currentAsset.rows[0];
 
     // Check access permissions
-    if (req.user!.role === 'base_commander' && asset.current_base_id !== req.user!.base_id) {
+    if (req.user!.role === 'base_commander' && asset.base_id !== req.user!.base_id) {
       return res.status(403).json({
         success: false,
         error: 'Access denied to this asset'
       });
     }
 
-    // Base commanders can only update assets in their base
-    const baseId = req.user!.role === 'base_commander' ? req.user!.base_id : current_base_id;
+    // Validate quantities
+    if (quantity !== undefined && quantity < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Quantity must be non-negative'
+      });
+    }
 
+    const finalQuantity = quantity !== undefined ? quantity : asset.quantity;
+    const finalAvailableQuantity = available_quantity !== undefined ? available_quantity : asset.available_quantity;
+    const finalAssignedQuantity = assigned_quantity !== undefined ? assigned_quantity : asset.assigned_quantity;
+
+    if (finalAvailableQuantity + finalAssignedQuantity > finalQuantity) {
+      return res.status(400).json({
+        success: false,
+        error: 'Available + assigned quantity cannot exceed total quantity'
+      });
+    }
+
+    // Update asset
     const updateQuery = `
       UPDATE assets 
-      SET name = COALESCE($1, name),
-          description = COALESCE($2, description),
-          current_base_id = COALESCE($3, current_base_id),
-          status = COALESCE($4, status),
-          current_value = COALESCE($5, current_value),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = $6
+      SET quantity = $1, available_quantity = $2, assigned_quantity = $3, status = $4, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $5
       RETURNING *
     `;
     const result = await query(updateQuery, [
-      name,
-      description,
-      baseId,
-      status,
-      current_value,
+      finalQuantity,
+      finalAvailableQuantity,
+      finalAssignedQuantity,
+      status || asset.status,
       id
     ]);
 
@@ -261,66 +316,73 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
 
     // Log asset update
     logger.info({
-      action: 'ASSET_UPDATED',
+      action: 'ASSET_INVENTORY_UPDATED',
       user_id: req.user!.user_id,
       asset_id: id,
-      changes: req.body
+      old_quantity: asset.quantity,
+      new_quantity: finalQuantity
     });
 
-    if (!updatedAsset) {
-      return res.status(404).json({ success: false, error: 'Asset not found' });
-    }
     return res.json({
       success: true,
       data: updatedAsset
     });
   } catch (error) {
+    logger.error('Update asset error:', error);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
 // @route   DELETE /api/assets/:id
-// @desc    Delete asset (soft delete by setting status to retired)
+// @desc    Delete asset inventory
 // @access  Private (Admin only)
 router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
     // Check if asset exists
-    const existingAsset = await query(
+    const assetCheck = await query(
       'SELECT * FROM assets WHERE id = $1',
       [id]
     );
 
-    if (existingAsset.rows.length === 0) {
+    if (assetCheck.rows.length === 0) {
       return res.status(404).json({
         success: false,
         error: 'Asset not found'
       });
     }
 
-    // Soft delete by setting status to retired
-    const deleteQuery = `
-      UPDATE assets 
-      SET status = 'retired', updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING *
-    `;
-    const result = await query(deleteQuery, [id]);
+    const asset = assetCheck.rows[0];
 
-    // Log asset retirement
+    // Check if asset has assignments
+    const assignmentCheck = await query(
+      'SELECT COUNT(*) as count FROM assignments WHERE asset_type_id = $1 AND base_id = $2 AND status = $3',
+      [asset.asset_type_id, asset.base_id, 'active']
+    );
+
+    if (parseInt(assignmentCheck.rows[0].count) > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Cannot delete asset with active assignments'
+      });
+    }
+
+    // Delete asset
+    await query('DELETE FROM assets WHERE id = $1', [id]);
+
+    // Log asset deletion
     logger.info({
-      action: 'ASSET_RETIRED',
+      action: 'ASSET_INVENTORY_DELETED',
       user_id: req.user!.user_id,
-      asset_id: id
+      asset_id: id,
+      asset_type_id: asset.asset_type_id,
+      base_id: asset.base_id
     });
 
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Asset not found' });
-    }
     return res.json({
       success: true,
-      message: 'Asset deleted'
+      message: 'Asset inventory deleted successfully'
     });
   } catch (error) {
     return res.status(500).json({ success: false, error: 'Server error' });

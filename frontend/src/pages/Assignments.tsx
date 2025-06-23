@@ -27,17 +27,22 @@ import {
   Select,
   MenuItem,
   TablePagination,
+  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
   KeyboardReturn as KeyboardReturnIcon,
+  Visibility as ViewIcon,
+  Search as SearchIcon,
+  FilterList as FilterIcon,
 } from '@mui/icons-material';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import FilterBar from '../components/FilterBar.tsx';
 
 interface Assignment {
   id: string;
@@ -52,11 +57,12 @@ interface Assignment {
   base_name: string;
   assignment_date: string;
   return_date?: string;
-  status: 'active' | 'returned' | 'lost' | 'damaged' | 'partially_returned';
+  status: 'active' | 'returned' | 'lost' | 'damaged' | 'partially_returned' | 'expended';
   quantity: number;
   returned_quantity: number;
   notes?: string;
   created_at: string;
+  expended_quantity: number;
 }
 
 interface Asset {
@@ -100,11 +106,11 @@ const Assignments: React.FC = () => {
   const [error, setError] = useState('');
   const [openDialog, setOpenDialog] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState<Assignment | null>(null);
-  const [returnDialog, setReturnDialog] = useState(false);
-  const [returningAssignment, setReturningAssignment] = useState<Assignment | null>(null);
-  const [returnQuantity, setReturnQuantity] = useState(1);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [expendDialog, setExpendDialog] = useState(false);
+  const [expendingAssignment, setExpendingAssignment] = useState<Assignment | null>(null);
+  const [expendQuantity, setExpendQuantity] = useState(1);
 
   const [formData, setFormData] = useState<CreateAssignmentForm>({
     asset_id: '',
@@ -311,38 +317,18 @@ const Assignments: React.FC = () => {
     }
   };
 
-  const handleReturn = async (assignment: Assignment) => {
-    setReturningAssignment(assignment);
-    setReturnQuantity(1);
-    setReturnDialog(true);
-  };
-
-  const handleReturnSubmit = async () => {
-    if (!returningAssignment) return;
-
-    try {
-      await axios.put(`${process.env.REACT_APP_API_URL}/assignments/${returningAssignment.id}/return`, {
-        quantity: returnQuantity,
-      });
-      setReturnDialog(false);
-      setReturningAssignment(null);
-      fetchAllAssignments();
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to return assignment');
-    }
-  };
-
-  const handleReturnCancel = () => {
-    setReturnDialog(false);
-    setReturningAssignment(null);
-  };
-
-  const handleClearFilters = () => {
+  const handleFiltersChange = (filters: {
+    base_id: string;
+    asset_type_id: string;
+    start_date: Date | null;
+    end_date: Date | null;
+  }) => {
     setFilters({
-      base_id: '',
+      ...filters,
+      base_id: filters.base_id,
       status: '',
       asset_id: '',
-      personnel_id: '',
+      personnel_id: ''
     });
   };
 
@@ -362,13 +348,36 @@ const Assignments: React.FC = () => {
         return 'warning';
       case 'partially_returned':
         return 'info';
+      case 'expended':
+        return 'success';
       default:
         return 'default';
     }
   };
 
-  const canReturn = (assignment: Assignment) => {
-    return assignment.status === 'active' && assignment.quantity > assignment.returned_quantity;
+  const handleExpend = (assignment: Assignment) => {
+    setExpendingAssignment(assignment);
+    setExpendQuantity(1);
+    setExpendDialog(true);
+  };
+
+  const handleExpendSubmit = async () => {
+    if (!expendingAssignment) return;
+    try {
+      await axios.put(`${process.env.REACT_APP_API_URL}/assignments/${expendingAssignment.id}/expend`, {
+        quantity: expendQuantity,
+      });
+      setExpendDialog(false);
+      setExpendingAssignment(null);
+      fetchAllAssignments();
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to expend assignment');
+    }
+  };
+
+  const handleExpendCancel = () => {
+    setExpendDialog(false);
+    setExpendingAssignment(null);
   };
 
   if (loading) {
@@ -394,79 +403,16 @@ const Assignments: React.FC = () => {
       {/* Filters */}
       <Card sx={{ mb: 2 }}>
         <CardContent>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
-              <FormControl fullWidth>
-                <InputLabel>Base</InputLabel>
-                <Select
-                  value={filters.base_id}
-                  label="Base"
-                  onChange={(e) => setFilters({ ...filters, base_id: e.target.value })}
-                >
-                  <MenuItem value="">All Bases</MenuItem>
-                  {bases.map((base) => (
-                    <MenuItem key={base.id} value={base.id}>
-                      {base.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={filters.status}
-                  label="Status"
-                  onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                >
-                  <MenuItem value="">All Statuses</MenuItem>
-                  <MenuItem value="active">Active</MenuItem>
-                  <MenuItem value="returned">Returned</MenuItem>
-                  <MenuItem value="lost">Lost</MenuItem>
-                  <MenuItem value="damaged">Damaged</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
-              <FormControl fullWidth>
-                <InputLabel>Asset</InputLabel>
-                <Select
-                  value={filters.asset_id}
-                  label="Asset"
-                  onChange={(e) => setFilters({ ...filters, asset_id: e.target.value })}
-                >
-                  <MenuItem value="">All Assets</MenuItem>
-                  {assets.map((asset) => (
-                    <MenuItem key={asset.id} value={asset.id}>
-                      {asset.name} ({asset.serial_number})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
-              <FormControl fullWidth>
-                <InputLabel>Personnel</InputLabel>
-                <Select
-                  value={filters.personnel_id}
-                  label="Personnel"
-                  onChange={(e) => setFilters({ ...filters, personnel_id: e.target.value })}
-                >
-                  <MenuItem value="">All Personnel</MenuItem>
-                  {personnel.map((person) => (
-                    <MenuItem key={person.id} value={person.id}>
-                      {person.first_name} {person.last_name} ({person.rank})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-          </Grid>
+          <Typography variant="h6" gutterBottom>
+            <FilterIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+            Filters
+          </Typography>
+          <FilterBar
+            onFiltersChange={handleFiltersChange}
+            showDateFilters={false}
+            title="Assignment Filters"
+          />
           <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
-            <Button variant="outlined" onClick={handleClearFilters}>
-              Clear Filters
-            </Button>
             <Typography variant="body2" sx={{ alignSelf: 'center', ml: 2 }}>
               Showing {filteredAssignments.length} of {allAssignments.length} assignments
             </Typography>
@@ -494,9 +440,7 @@ const Assignments: React.FC = () => {
               <TableCell>Personnel</TableCell>
               <TableCell>Base</TableCell>
               <TableCell>Assignment Date</TableCell>
-              <TableCell>Return Date</TableCell>
               <TableCell>Quantity</TableCell>
-              <TableCell>Returned</TableCell>
               <TableCell>Status</TableCell>
               <TableCell>Actions</TableCell>
             </TableRow>
@@ -508,9 +452,6 @@ const Assignments: React.FC = () => {
                   <Box>
                     <Typography variant="body2" fontWeight="bold">
                       {assignment.asset_name}
-                    </Typography>
-                    <Typography variant="caption" color="textSecondary">
-                      {assignment.asset_serial_number}
                     </Typography>
                   </Box>
                 </TableCell>
@@ -526,11 +467,7 @@ const Assignments: React.FC = () => {
                 </TableCell>
                 <TableCell>{assignment.base_name}</TableCell>
                 <TableCell>{formatDate(assignment.assignment_date)}</TableCell>
-                <TableCell>
-                  {assignment.return_date ? formatDate(assignment.return_date) : '-'}
-                </TableCell>
                 <TableCell>{assignment.quantity}</TableCell>
-                <TableCell>{assignment.returned_quantity}</TableCell>
                 <TableCell>
                   <Chip
                     label={assignment.status}
@@ -547,16 +484,6 @@ const Assignments: React.FC = () => {
                   >
                     <EditIcon />
                   </IconButton>
-                  {canReturn(assignment) && (
-                    <IconButton
-                      size="small"
-                      onClick={() => handleReturn(assignment)}
-                      color="success"
-                      title="Return"
-                    >
-                      <KeyboardReturnIcon />
-                    </IconButton>
-                  )}
                   <IconButton
                     size="small"
                     onClick={() => handleDelete(assignment.id)}
@@ -566,6 +493,16 @@ const Assignments: React.FC = () => {
                   >
                     <DeleteIcon />
                   </IconButton>
+                  {assignment.status !== 'expended' && (
+                    <IconButton
+                      size="small"
+                      onClick={() => handleExpend(assignment)}
+                      color="warning"
+                      title="Expend"
+                    >
+                      <span style={{ fontWeight: 'bold' }}>E</span>
+                    </IconButton>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
@@ -695,32 +632,32 @@ const Assignments: React.FC = () => {
         </DialogActions>
       </Dialog>
 
-      {/* Return Dialog */}
-      <Dialog open={returnDialog} onClose={handleReturnCancel} maxWidth="md" fullWidth>
-        <DialogTitle>Return Assignment</DialogTitle>
+      {/* Expend Dialog */}
+      <Dialog open={expendDialog} onClose={handleExpendCancel} maxWidth="md" fullWidth>
+        <DialogTitle>Expend Assignment</DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
               <Typography variant="body1">
-                Are you sure you want to return this assignment?
+                How many assets do you want to mark as expended?
               </Typography>
             </Grid>
             <Grid item xs={12}>
               <TextField
                 fullWidth
-                label="Return Quantity"
+                label="Expend Quantity"
                 type="number"
-                value={returnQuantity}
-                onChange={(e) => setReturnQuantity(parseInt(e.target.value) || 1)}
-                inputProps={{ min: 1 }}
+                value={expendQuantity}
+                onChange={(e) => setExpendQuantity(parseInt(e.target.value) || 1)}
+                inputProps={{ min: 1, max: expendingAssignment ? expendingAssignment.quantity - expendingAssignment.expended_quantity : 1 }}
               />
             </Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={handleReturnCancel}>Cancel</Button>
-          <Button onClick={handleReturnSubmit} variant="contained">
-            Return
+          <Button onClick={handleExpendCancel}>Cancel</Button>
+          <Button onClick={handleExpendSubmit} variant="contained" color="warning">
+            Expend
           </Button>
         </DialogActions>
       </Dialog>

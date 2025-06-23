@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
   Button,
   Table,
   TableBody,
@@ -11,33 +9,28 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Paper,
-  IconButton,
-  Chip,
-  Alert,
-  CircularProgress,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  TextField,
-  Grid,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  TablePagination,
-  InputAdornment,
+  IconButton,
+  Alert,
+  Card,
+  CardContent,
+  Chip,
+  CircularProgress
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  FilterList as FilterIcon,
-  Search as SearchIcon,
+  FilterList as FilterIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import FilterBar from '../components/FilterBar.tsx';
 
 interface Asset {
   id: string;
@@ -238,16 +231,6 @@ const Assets: React.FC = () => {
     }
   };
 
-  const handleClearFilters = () => {
-    setFilters({
-      asset_type_id: '',
-      current_base_id: '',
-      status: '',
-      serial_number: '',
-    });
-    setPage(0);
-  };
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'available':
@@ -261,6 +244,21 @@ const Assets: React.FC = () => {
       default:
         return 'default';
     }
+  };
+
+  const handleFiltersChange = (filters: {
+    base_id: string;
+    asset_type_id: string;
+    start_date: Date | null;
+    end_date: Date | null;
+  }) => {
+    setFilters({
+      asset_type_id: filters.asset_type_id || '',
+      current_base_id: filters.base_id || '',
+      status: '',
+      serial_number: ''
+    });
+    setPage(0); // Reset to first page when filters change
   };
 
   if (loading) {
@@ -290,77 +288,12 @@ const Assets: React.FC = () => {
             <FilterIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
             Filters
           </Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={3}>
-              <FormControl fullWidth>
-                <InputLabel>Asset Type</InputLabel>
-                <Select
-                  value={filters.asset_type_id}
-                  label="Asset Type"
-                  onChange={(e) => setFilters({ ...filters, asset_type_id: e.target.value })}
-                >
-                  <MenuItem value="">All Types</MenuItem>
-                  {assetTypes.map((type) => (
-                    <MenuItem key={type.id} value={type.id}>
-                      {type.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <FormControl fullWidth>
-                <InputLabel>Base</InputLabel>
-                <Select
-                  value={filters.current_base_id}
-                  label="Base"
-                  onChange={(e) => setFilters({ ...filters, current_base_id: e.target.value })}
-                >
-                  <MenuItem value="">All Bases</MenuItem>
-                  {bases.map((base) => (
-                    <MenuItem key={base.id} value={base.id}>
-                      {base.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={filters.status}
-                  label="Status"
-                  onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                >
-                  <MenuItem value="">All Status</MenuItem>
-                  <MenuItem value="available">Available</MenuItem>
-                  <MenuItem value="assigned">Assigned</MenuItem>
-                  <MenuItem value="maintenance">Maintenance</MenuItem>
-                  <MenuItem value="retired">Retired</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <TextField
-                fullWidth
-                label="Serial Number"
-                value={filters.serial_number}
-                onChange={(e) => setFilters({ ...filters, serial_number: e.target.value })}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon />
-                    </InputAdornment>
-                  ),
-                }}
-              />
-            </Grid>
-          </Grid>
+          <FilterBar
+            onFiltersChange={handleFiltersChange}
+            showDateFilters={false}
+            title="Asset Filters"
+          />
           <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
-            <Button variant="outlined" onClick={handleClearFilters}>
-              Clear Filters
-            </Button>
             <Typography variant="body2" sx={{ alignSelf: 'center', ml: 2 }}>
               Showing {filteredAssets.length} of {allAssets.length} assets
             </Typography>
@@ -370,14 +303,16 @@ const Assets: React.FC = () => {
 
       {/* Actions */}
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-          disabled={user?.role !== 'admin'}
-        >
-          New Asset
-        </Button>
+        {user?.role !== 'logistics_officer' && (
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => handleOpenDialog()}
+            disabled={user?.role !== 'admin'}
+          >
+            New Asset
+          </Button>
+        )}
       </Box>
 
       {/* Assets Table */}
@@ -385,7 +320,6 @@ const Assets: React.FC = () => {
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Serial Number</TableCell>
               <TableCell>Name</TableCell>
               <TableCell>Type</TableCell>
               <TableCell>Base</TableCell>
@@ -400,7 +334,6 @@ const Assets: React.FC = () => {
           <TableBody>
             {paginatedAssets.map((asset) => (
               <TableRow key={asset.id}>
-                <TableCell>{asset.serial_number}</TableCell>
                 <TableCell>{asset.name}</TableCell>
                 <TableCell>{asset.asset_type_name}</TableCell>
                 <TableCell>{asset.current_base_name}</TableCell>
@@ -415,153 +348,65 @@ const Assets: React.FC = () => {
                 <TableCell>{asset.available_quantity}</TableCell>
                 <TableCell>
                   {asset.purchase_cost !== null && asset.purchase_cost !== undefined 
-                    ? `$${Number(asset.purchase_cost).toLocaleString()}` 
-                    : '$0'}
+                    ? `$${Number(asset.purchase_cost).toLocaleString()}`
+                    : 'N/A'}
                 </TableCell>
                 <TableCell>
                   {asset.current_value !== null && asset.current_value !== undefined 
-                    ? `$${Number(asset.current_value).toLocaleString()}` 
-                    : '$0'}
+                    ? `$${Number(asset.current_value).toLocaleString()}`
+                    : 'N/A'}
                 </TableCell>
                 <TableCell>
-                  <IconButton
-                    size="small"
-                    onClick={() => handleOpenDialog(asset)}
-                    disabled={user?.role !== 'admin'}
-                  >
-                    <EditIcon />
-                  </IconButton>
-                  <IconButton
-                    size="small"
-                    onClick={() => handleDelete(asset.id)}
-                    disabled={user?.role !== 'admin'}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
+                  {user?.role !== 'logistics_officer' && (
+                    <>
+                      <IconButton
+                        color="primary"
+                        onClick={() => handleOpenDialog(asset)}
+                      >
+                        <EditIcon />
+                      </IconButton>
+                      <IconButton
+                        color="error"
+                        onClick={() => handleDelete(asset.id)}
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
-        <TablePagination
-          rowsPerPageOptions={[5, 10, 25, 50]}
-          component="div"
-          count={filteredAssets.length}
-          rowsPerPage={rowsPerPage}
-          page={page}
-          onPageChange={(_, newPage) => setPage(newPage)}
-          onRowsPerPageChange={(e) => {
-            setRowsPerPage(parseInt(e.target.value, 10));
-            setPage(0);
-          }}
-        />
       </TableContainer>
 
-      {/* Create/Edit Dialog */}
-      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
-        <DialogTitle>
-          {editingAsset ? 'Edit Asset' : 'New Asset'}
-        </DialogTitle>
+      {/* Pagination */}
+      <TablePagination
+        rowsPerPageOptions={[10, 25, 50, 100]}
+        component="div"
+        count={filteredAssets.length}
+        rowsPerPage={rowsPerPage}
+        page={page}
+        onPageChange={(event, newPage) => setPage(newPage)}
+        onRowsPerPageChange={(event) => {
+          setRowsPerPage(parseInt(event.target.value, 10));
+          setPage(0);
+        }}
+      />
+
+      {/* Dialog */}
+      <Dialog open={openDialog} onClose={handleCloseDialog}>
+        <DialogTitle>{editingAsset ? 'Edit Asset' : 'New Asset'}</DialogTitle>
         <DialogContent>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Asset Type</InputLabel>
-                <Select
-                  value={formData.asset_type_id}
-                  label="Asset Type"
-                  onChange={(e) => setFormData({ ...formData, asset_type_id: e.target.value })}
-                >
-                  {assetTypes.map((type) => (
-                    <MenuItem key={type.id} value={type.id}>
-                      {type.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Serial Number"
-                value={formData.serial_number}
-                onChange={(e) => setFormData({ ...formData, serial_number: e.target.value })}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              />
-            </Grid>
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                label="Description"
-                multiline
-                rows={3}
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Base</InputLabel>
-                <Select
-                  value={formData.current_base_id}
-                  label="Base"
-                  onChange={(e) => setFormData({ ...formData, current_base_id: e.target.value })}
-                >
-                  {bases.map((base) => (
-                    <MenuItem key={base.id} value={base.id}>
-                      {base.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Purchase Date"
-                type="date"
-                value={formData.purchase_date}
-                onChange={(e) => setFormData({ ...formData, purchase_date: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Purchase Cost"
-                type="number"
-                value={formData.purchase_cost}
-                onChange={(e) => setFormData({ ...formData, purchase_cost: parseFloat(e.target.value) || 0 })}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Quantity"
-                type="number"
-                value={formData.quantity}
-                onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) || 1 })}
-                inputProps={{ min: 1 }}
-              />
-            </Grid>
-          </Grid>
+          {/* Form content */}
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button onClick={handleSubmit} variant="contained">
-            {editingAsset ? 'Update' : 'Create'}
-          </Button>
+          <Button onClick={handleSubmit}>Save</Button>
         </DialogActions>
       </Dialog>
     </Box>
   );
 };
 
-export default Assets; 
+export default Assets;

@@ -5,87 +5,164 @@ import { logger } from '../utils/logger';
 
 const router = Router();
 
-// @route   GET /api/dashboard/metrics
-// @desc    Get dashboard metrics
+// @route   GET /api/dashboard/summary
+// @desc    Get a full summary of dashboard metrics focused on asset quantities
 // @access  Private
-router.get('/metrics', authenticate, async (req: Request, res: Response) => {
+router.get('/summary', authenticate, async (req: Request, res: Response) => {
   try {
-    const { start_date, end_date, base_id } = req.query;
-    
-    // Build date filter
-    const dateFilter = start_date && end_date 
-      ? `AND DATE(created_at) BETWEEN $1 AND $2` 
-      : '';
-    
-    const dateParams = start_date && end_date ? [start_date, end_date] : [];
-    const paramOffset = dateParams.length;
+    const { base_id, start_date, end_date, asset_type_id } = req.query as { [key: string]: string };
+    const { role, base_id: user_base_id } = req.user!;
 
-    // Build base filter
+    // Determine target base based on user role
+    let targetBaseId: string;
+    if (role === 'admin') {
+      // Admin can view any base or all bases
+      targetBaseId = base_id || '';
+    } else {
+      // Base commander and logistics officer can only view their assigned base
+      targetBaseId = user_base_id || '';
+    }
+    
+    const queryParams: any[] = [];
     let baseFilter = '';
-    if (base_id && req.user!.role !== 'admin') {
-      baseFilter = `AND base_id = $${paramOffset + 1}`;
+    
+    if (targetBaseId) {
+      queryParams.push(targetBaseId);
+      baseFilter = 'AND base_id = $1';
+    }
+    
+    if (start_date && end_date) {
+      queryParams.push(start_date, end_date);
+    }
+    if (asset_type_id) {
+      queryParams.push(asset_type_id);
     }
 
-    // Get purchases
-    const purchasesQuery = `
-      SELECT COALESCE(SUM(quantity), 0) as total
+    const dateFilter = (dateCol: string) => 
+      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_type_id ? 1 : 0)} AND $${queryParams.length - (asset_type_id ? 1 : 0) + 1}`;
+    
+    const assetTypeFilter = asset_type_id ? 
+      `AND asset_type_id = $${queryParams.length}` : '';
+
+    // Get total asset quantities
+    const totalQuantitiesQuery = `
+      SELECT COALESCE(SUM(quantity), 0) AS count 
+      FROM assets 
+      WHERE 1=1 ${baseFilter} ${assetTypeFilter}
+    `;
+
+    // Get available asset quantities
+    const availableQuantitiesQuery = `
+      SELECT COALESCE(SUM(available_quantity), 0) AS count 
+      FROM assets 
+      WHERE 1=1 ${baseFilter} ${assetTypeFilter}
+    `;
+
+    // Get assigned asset quantities
+    const assignedQuantitiesQuery = `
+      SELECT COALESCE(SUM(assigned_quantity), 0) AS count 
+      FROM assets 
+      WHERE 1=1 ${baseFilter} ${assetTypeFilter}
+    `;
+
+    // Get low stock asset quantities
+    const lowStockQuantitiesQuery = `
+      SELECT COALESCE(SUM(quantity), 0) AS count 
+      FROM assets 
+      WHERE status = 'low_stock' ${baseFilter} ${assetTypeFilter}
+    `;
+
+    // Get assets purchased in date range (quantities)
+    const purchasedQuantitiesQuery = `
+      SELECT COALESCE(SUM(quantity), 0) AS count 
       FROM purchases 
-      WHERE 1=1 ${dateFilter} ${baseFilter}
+      WHERE status = 'approved' ${baseFilter} ${assetTypeFilter} ${dateFilter('purchase_date')}
     `;
-    const purchasesResult = await query(purchasesQuery, [...dateParams, ...(base_id ? [base_id] : [])]);
 
-    // Get transfers in
+    // Get assets transferred in (completed transfers - quantities)
     const transfersInQuery = `
-      SELECT COALESCE(SUM(quantity), 0) as total
-      FROM transfers 
-      WHERE status = 'completed' ${dateFilter} 
-      AND to_base_id = $${paramOffset + 1} ${baseFilter}
+      SELECT COALESCE(SUM(quantity), 0) AS count 
+      FROM transfers
+      WHERE status = 'completed' AND to_base_id = $1 ${assetTypeFilter} ${dateFilter('transfer_date')}
     `;
-    const transfersInResult = await query(transfersInQuery, [...dateParams, base_id || req.user!.base_id, ...(base_id ? [base_id] : [])]);
 
-    // Get transfers out
+    // Get assets transferred out (completed transfers - quantities)
     const transfersOutQuery = `
-      SELECT COALESCE(SUM(quantity), 0) as total
-      FROM transfers 
-      WHERE status = 'completed' ${dateFilter} 
-      AND from_base_id = $${paramOffset + 1} ${baseFilter}
+      SELECT COALESCE(SUM(quantity), 0) AS count 
+      FROM transfers
+      WHERE status = 'completed' AND from_base_id = $1 ${assetTypeFilter} ${dateFilter('transfer_date')}
     `;
-    const transfersOutResult = await query(transfersOutQuery, [...dateParams, base_id || req.user!.base_id, ...(base_id ? [base_id] : [])]);
 
-    // Get assigned assets
-    const assignedQuery = `
-      SELECT COALESCE(COUNT(*), 0) as total
-      FROM assignments 
-      WHERE status = 'active' ${dateFilter} ${baseFilter}
-    `;
-    const assignedResult = await query(assignedQuery, [...dateParams, ...(base_id ? [base_id] : [])]);
-
-    // Get expended assets
-    const expendedQuery = `
-      SELECT COALESCE(SUM(quantity), 0) as total
+    // Get assets expended in date range (quantities)
+    const expendedQuantitiesQuery = `
+      SELECT COALESCE(SUM(quantity), 0) AS count 
       FROM expenditures 
-      WHERE 1=1 ${dateFilter} ${baseFilter}
+      WHERE 1=1 ${baseFilter} ${assetTypeFilter} ${dateFilter('expenditure_date')}
     `;
-    const expendedResult = await query(expendedQuery, [...dateParams, ...(base_id ? [base_id] : [])]);
 
-    // Calculate metrics
-    const purchases = parseInt(purchasesResult.rows[0].total) || 0;
-    const transfersIn = parseInt(transfersInResult.rows[0].total) || 0;
-    const transfersOut = parseInt(transfersOutResult.rows[0].total) || 0;
-    const assigned = parseInt(assignedResult.rows[0].total) || 0;
-    const expended = parseInt(expendedResult.rows[0].total) || 0;
+    const queries = [
+      query(totalQuantitiesQuery, queryParams),
+      query(availableQuantitiesQuery, queryParams),
+      query(assignedQuantitiesQuery, queryParams),
+      query(lowStockQuantitiesQuery, queryParams),
+      query(purchasedQuantitiesQuery, queryParams),
+      query(expendedQuantitiesQuery, queryParams)
+    ];
+
+    // Add transfer queries only if we have a specific base
+    if (targetBaseId) {
+      queries.push(query(transfersInQuery, [targetBaseId, ...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
+      queries.push(query(transfersOutQuery, [targetBaseId, ...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
+    } else {
+      // For admin viewing all bases, transfers are not applicable
+      queries.push(Promise.resolve({ rows: [{ count: '0' }] }));
+      queries.push(Promise.resolve({ rows: [{ count: '0' }] }));
+    }
+
+    const [
+      totalQuantitiesRes,
+      availableQuantitiesRes,
+      assignedQuantitiesRes,
+      lowStockQuantitiesRes,
+      purchasedQuantitiesRes,
+      expendedQuantitiesRes,
+      transfersInRes,
+      transfersOutRes
+    ] = await Promise.all(queries);
+    
+    const total_quantities = parseInt(totalQuantitiesRes.rows[0].count) || 0;
+    const available_quantities = parseInt(availableQuantitiesRes.rows[0].count) || 0;
+    const assigned_quantities = parseInt(assignedQuantitiesRes.rows[0].count) || 0;
+    const low_stock_quantities = parseInt(lowStockQuantitiesRes.rows[0].count) || 0;
+    const purchased_quantities = parseInt(purchasedQuantitiesRes.rows[0].count) || 0;
+    const expended_quantities = parseInt(expendedQuantitiesRes.rows[0].count) || 0;
+    const transfers_in = parseInt(transfersInRes.rows[0].count) || 0;
+    const transfers_out = parseInt(transfersOutRes.rows[0].count) || 0;
+
+    // Calculate opening and closing balance for asset quantities
+    const opening_balance = total_quantities - purchased_quantities - transfers_in + transfers_out + expended_quantities;
+    const closing_balance = total_quantities;
+    const net_movement = purchased_quantities + transfers_in - transfers_out - expended_quantities;
 
     res.json({
       success: true,
       data: {
-        totalPurchases: purchases,
-        totalTransfers: transfersIn + transfersOut,
-        totalAssignments: assigned,
-        totalExpenditures: expended
+        opening_balance,
+        closing_balance,
+        net_movement,
+        total_assets: total_quantities,
+        available_assets: available_quantities,
+        assigned_assets: assigned_quantities,
+        maintenance_assets: low_stock_quantities,
+        purchased_assets: purchased_quantities,
+        transfers_in,
+        transfers_out,
+        expended_assets: expended_quantities
       }
     });
+
   } catch (error) {
-    logger.error('Dashboard metrics error:', error);
+    logger.error('Dashboard summary error:', error);
     res.status(500).json({
       success: false,
       error: 'Server error'
@@ -94,75 +171,108 @@ router.get('/metrics', authenticate, async (req: Request, res: Response) => {
 });
 
 // @route   GET /api/dashboard/movements
-// @desc    Get movement breakdown
+// @desc    Get movement breakdown for asset quantities
 // @access  Private
 router.get('/movements', authenticate, async (req: Request, res: Response) => {
   try {
     const { start_date, end_date, base_id, asset_type_id } = req.query;
+    const { role, base_id: user_base_id } = req.user!;
     
-    // Build filters
-    const dateFilter = start_date && end_date 
-      ? `AND DATE(created_at) BETWEEN $1 AND $2` 
-      : '';
+    // Determine target base based on user role
+    let targetBaseId: string;
+    if (role === 'admin') {
+      targetBaseId = base_id as string || '';
+    } else {
+      targetBaseId = user_base_id || '';
+    }
     
-    const dateParams = start_date && end_date ? [start_date, end_date] : [];
-    const paramOffset = dateParams.length;
-
+    const queryParams: any[] = [];
     let baseFilter = '';
-    if (base_id && req.user!.role !== 'admin') {
-      baseFilter = `AND base_id = $${paramOffset + 1}`;
+    
+    if (targetBaseId) {
+      queryParams.push(targetBaseId);
+      baseFilter = 'AND base_id = $1';
+    }
+    
+    if (start_date && end_date) {
+      queryParams.push(start_date, end_date);
+    }
+    if (asset_type_id) {
+      queryParams.push(asset_type_id);
     }
 
+    const dateFilter = (dateCol: string) => 
+      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_type_id ? 1 : 0)} AND $${queryParams.length - (asset_type_id ? 1 : 0) + 1}`;
+    
     const assetTypeFilter = asset_type_id ? 
-      `AND asset_type_id = $${paramOffset + (base_id ? 2 : 1)}` : '';
+      `AND asset_type_id = $${queryParams.length}` : '';
 
-    // Get purchases
+    // Get purchases breakdown
     const purchasesQuery = `
-      SELECT p.*, at.name as asset_type_name, b.name as base_name
+      SELECT 
+        p.id,
+        at.name as name,
+        at.name as asset_type_name,
+        p.quantity,
+        b.name as base_name,
+        p.purchase_date as date
       FROM purchases p
       JOIN asset_types at ON p.asset_type_id = at.id
       JOIN bases b ON p.base_id = b.id
-      WHERE 1=1 ${dateFilter} ${baseFilter} ${assetTypeFilter}
+      WHERE p.status = 'approved' ${baseFilter} ${assetTypeFilter} ${dateFilter('p.purchase_date')}
       ORDER BY p.purchase_date DESC
+      LIMIT 10
     `;
-    const purchasesResult = await query(purchasesQuery, [...dateParams, ...(base_id ? [base_id] : []), ...(asset_type_id ? [asset_type_id] : [])]);
 
-    // Get transfers in
-    const transfersInQuery = `
-      SELECT t.*, at.name as asset_type_name, 
-             fb.name as from_base_name, tb.name as to_base_name
+    // Get transfers breakdown
+    const transfersQuery = `
+      SELECT 
+        t.id,
+        at.name as name,
+        at.name as asset_type_name,
+        t.quantity,
+        fb.name as from_base_name,
+        tb.name as to_base_name,
+        t.transfer_date as date
       FROM transfers t
       JOIN asset_types at ON t.asset_type_id = at.id
       JOIN bases fb ON t.from_base_id = fb.id
       JOIN bases tb ON t.to_base_id = tb.id
-      WHERE t.status = 'completed' ${dateFilter} 
-      AND t.to_base_id = $${paramOffset + 1} ${baseFilter} ${assetTypeFilter}
+      WHERE t.status = 'completed' ${baseFilter ? 'AND (t.from_base_id = $1 OR t.to_base_id = $1)' : ''} ${assetTypeFilter} ${dateFilter('t.transfer_date')}
       ORDER BY t.transfer_date DESC
+      LIMIT 10
     `;
-    const transfersInResult = await query(transfersInQuery, [...dateParams, base_id || req.user!.base_id, ...(base_id ? [base_id] : []), ...(asset_type_id ? [asset_type_id] : [])]);
 
-    // Get transfers out
-    const transfersOutQuery = `
-      SELECT t.*, at.name as asset_type_name, 
-             fb.name as from_base_name, tb.name as to_base_name
-      FROM transfers t
-      JOIN asset_types at ON t.asset_type_id = at.id
-      JOIN bases fb ON t.from_base_id = fb.id
-      JOIN bases tb ON t.to_base_id = tb.id
-      WHERE t.status = 'completed' ${dateFilter} 
-      AND t.from_base_id = $${paramOffset + 1} ${baseFilter} ${assetTypeFilter}
-      ORDER BY t.transfer_date DESC
-    `;
-    const transfersOutResult = await query(transfersOutQuery, [...dateParams, base_id || req.user!.base_id, ...(base_id ? [base_id] : []), ...(asset_type_id ? [asset_type_id] : [])]);
+    const [purchasesRes, transfersRes] = await Promise.all([
+      query(purchasesQuery, queryParams),
+      query(transfersQuery, queryParams)
+    ]);
+
+    // Separate transfers into incoming and outgoing based on target base
+    let transfersIn: any[] = [];
+    let transfersOut: any[] = [];
+    
+    if (targetBaseId) {
+      // Get the base name for the target base
+      const baseQuery = 'SELECT name FROM bases WHERE id = $1';
+      const baseRes = await query(baseQuery, [targetBaseId]);
+      const targetBaseName = baseRes.rows[0]?.name;
+      
+      if (targetBaseName) {
+        transfersIn = transfersRes.rows.filter((t: any) => t.to_base_name === targetBaseName);
+        transfersOut = transfersRes.rows.filter((t: any) => t.from_base_name === targetBaseName);
+      }
+    }
 
     res.json({
       success: true,
       data: {
-        purchases: purchasesResult.rows,
-        transfers_in: transfersInResult.rows,
-        transfers_out: transfersOutResult.rows
+        purchased_assets: purchasesRes.rows,
+        transfers_in: transfersIn,
+        transfers_out: transfersOut
       }
     });
+
   } catch (error) {
     logger.error('Dashboard movements error:', error);
     res.status(500).json({
@@ -172,60 +282,56 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
   }
 });
 
-// @route   GET /api/dashboard/balances
-// @desc    Get balance summaries by asset type
+// @route   GET /api/dashboard/inventory
+// @desc    Get current inventory status by asset type
 // @access  Private
-router.get('/balances', authenticate, async (req: Request, res: Response) => {
+router.get('/inventory', authenticate, async (req: Request, res: Response) => {
   try {
     const { base_id } = req.query;
+    const { role, base_id: user_base_id } = req.user!;
     
+    // Determine target base based on user role
+    let targetBaseId: string;
+    if (role === 'admin') {
+      targetBaseId = base_id as string || '';
+    } else {
+      targetBaseId = user_base_id || '';
+    }
+    
+    const queryParams: any[] = [];
     let baseFilter = '';
-    if (base_id && req.user!.role !== 'admin') {
-      baseFilter = 'AND base_id = $1';
+    
+    if (targetBaseId) {
+      queryParams.push(targetBaseId);
+      baseFilter = 'WHERE a.base_id = $1';
     }
 
-    // Get balance by asset type
-    const balanceQuery = `
+    const inventoryQuery = `
       SELECT 
-        at.id,
         at.name as asset_type_name,
         at.category,
-        COALESCE(SUM(CASE WHEN p.id IS NOT NULL THEN p.quantity ELSE 0 END), 0) as total_purchased,
-        COALESCE(SUM(CASE WHEN t_in.id IS NOT NULL THEN t_in.quantity ELSE 0 END), 0) as total_transferred_in,
-        COALESCE(SUM(CASE WHEN t_out.id IS NOT NULL THEN t_out.quantity ELSE 0 END), 0) as total_transferred_out,
-        COALESCE(SUM(CASE WHEN e.id IS NOT NULL THEN e.quantity ELSE 0 END), 0) as total_expended
-      FROM asset_types at
-      LEFT JOIN purchases p ON at.id = p.asset_type_id ${baseFilter}
-      LEFT JOIN transfers t_in ON at.id = t_in.asset_type_id AND t_in.status = 'completed' AND t_in.to_base_id = $${baseFilter ? '2' : '1'}
-      LEFT JOIN transfers t_out ON at.id = t_out.asset_type_id AND t_out.status = 'completed' AND t_out.from_base_id = $${baseFilter ? '2' : '1'}
-      LEFT JOIN expenditures e ON at.id = e.asset_type_id ${baseFilter}
-      WHERE at.is_active = true
-      GROUP BY at.id, at.name, at.category
-      ORDER BY at.name
+        at.unit_of_measure,
+        a.quantity,
+        a.available_quantity,
+        a.assigned_quantity,
+        a.status,
+        b.name as base_name
+      FROM assets a
+      JOIN asset_types at ON a.asset_type_id = at.id
+      JOIN bases b ON a.base_id = b.id
+      ${baseFilter}
+      ORDER BY at.name, b.name
     `;
 
-    const balanceResult = await query(balanceQuery, base_id ? [base_id, base_id] : [req.user!.base_id]);
-
-    const balances = balanceResult.rows.map((row: any) => ({
-      asset_type_id: row.id,
-      asset_type_name: row.asset_type_name,
-      category: row.category,
-      total_purchased: parseInt(row.total_purchased) || 0,
-      total_transferred_in: parseInt(row.total_transferred_in) || 0,
-      total_transferred_out: parseInt(row.total_transferred_out) || 0,
-      total_expended: parseInt(row.total_expended) || 0,
-      current_balance: (parseInt(row.total_purchased) || 0) + 
-                      (parseInt(row.total_transferred_in) || 0) - 
-                      (parseInt(row.total_transferred_out) || 0) - 
-                      (parseInt(row.total_expended) || 0)
-    }));
+    const inventoryRes = await query(inventoryQuery, queryParams);
 
     res.json({
       success: true,
-      data: balances
+      data: inventoryRes.rows
     });
+
   } catch (error) {
-    logger.error('Dashboard balances error:', error);
+    logger.error('Dashboard inventory error:', error);
     res.status(500).json({
       success: false,
       error: 'Server error'
@@ -233,17 +339,30 @@ router.get('/balances', authenticate, async (req: Request, res: Response) => {
   }
 });
 
-// @route   GET /api/dashboard/summary
-// @desc    Get a full summary of dashboard metrics
+// @route   GET /api/dashboard/expended-assets
+// @desc    Get expended assets data for chart visualization
 // @access  Private
-router.get('/summary', authenticate, async (req: Request, res: Response) => {
+router.get('/expended-assets', authenticate, async (req: Request, res: Response) => {
   try {
     const { base_id, start_date, end_date, asset_type_id } = req.query as { [key: string]: string };
     const { role, base_id: user_base_id } = req.user!;
 
-    const targetBaseId = (role === 'admin' && base_id) ? base_id : user_base_id;
+    // Determine target base based on user role
+    let targetBaseId: string;
+    if (role === 'admin') {
+      targetBaseId = base_id || '';
+    } else {
+      targetBaseId = user_base_id || '';
+    }
     
-    const queryParams: any[] = [targetBaseId];
+    const queryParams: any[] = [];
+    let baseFilter = '';
+    
+    if (targetBaseId) {
+      queryParams.push(targetBaseId);
+      baseFilter = 'AND e.base_id = $1';
+    }
+    
     if (start_date && end_date) {
       queryParams.push(start_date, end_date);
     }
@@ -252,66 +371,43 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
     }
 
     const dateFilter = (dateCol: string) => 
-      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $2 AND $3`;
+      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_type_id ? 1 : 0)} AND $${queryParams.length - (asset_type_id ? 1 : 0) + 1}`;
     
     const assetTypeFilter = asset_type_id ? 
-      `AND asset_type_id = $${queryParams.length}` : '';
+      `AND e.asset_type_id = $${queryParams.length}` : '';
 
-    const purchasesQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM purchases WHERE base_id = $1 ${dateFilter('purchase_date')} ${assetTypeFilter}`;
-    const expendedQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM expenditures WHERE base_id = $1 ${dateFilter('expenditure_date')} ${assetTypeFilter}`;
-    
-    // For assignments, we need to join through assets table to get asset_type_id
-    const assignmentsQuery = asset_type_id ? 
-      `SELECT COALESCE(COUNT(*), 0) AS count FROM assignments a 
-       JOIN assets ast ON a.asset_id = ast.id 
-       WHERE a.status = 'active' AND a.base_id = $1 ${dateFilter('a.assignment_date')} AND ast.asset_type_id = $${queryParams.length}` :
-      `SELECT COALESCE(COUNT(*), 0) AS count FROM assignments WHERE status = 'active' AND base_id = $1 ${dateFilter('assignment_date')}`;
-    
-    const transfersInQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM transfers WHERE status = 'completed' AND to_base_id = $1 ${dateFilter('transfer_date')} ${assetTypeFilter}`;
-    const transfersOutQuery = `SELECT COALESCE(SUM(quantity), 0) AS count FROM transfers WHERE status = 'completed' AND from_base_id = $1 ${dateFilter('transfer_date')} ${assetTypeFilter}`;
+    // Get expended assets by asset type
+    const expendedAssetsQuery = `
+      SELECT 
+        at.name as asset_type_name,
+        COALESCE(SUM(e.quantity), 0) as expended_quantity,
+        at.category,
+        at.unit_of_measure
+      FROM expenditures e
+      JOIN asset_types at ON e.asset_type_id = at.id
+      WHERE 1=1 ${baseFilter} ${assetTypeFilter} ${dateFilter('e.expenditure_date')}
+      GROUP BY at.id, at.name, at.category, at.unit_of_measure
+      ORDER BY expended_quantity DESC
+      LIMIT 10
+    `;
 
-    const [
-      purchasesRes,
-      expendedRes,
-      assignmentsRes,
-      transfersInRes,
-      transfersOutRes
-    ] = await Promise.all([
-      query(purchasesQuery, queryParams),
-      query(expendedQuery, queryParams),
-      query(assignmentsQuery, queryParams),
-      query(transfersInQuery, queryParams),
-      query(transfersOutQuery, queryParams)
-    ]);
-    
-    const purchases = parseInt(purchasesRes.rows[0].count) || 0;
-    const expended = parseInt(expendedRes.rows[0].count) || 0;
-    const assigned = parseInt(assignmentsRes.rows[0].count) || 0;
-    const transfers_in = parseInt(transfersInRes.rows[0].count) || 0;
-    const transfers_out = parseInt(transfersOutRes.rows[0].count) || 0;
+    const expendedAssetsRes = await query(expendedAssetsQuery, queryParams);
 
-    // Opening balance is a tricky concept without historical snapshots.
-    // For this dashboard, we'll consider it 0 and focus on movements.
-    const opening_balance = 0;
-    const net_movement = (purchases + transfers_in) - (transfers_out + expended);
-    const closing_balance = opening_balance + net_movement;
+    // Format data for chart
+    const chartData = expendedAssetsRes.rows.map((row: any) => ({
+      name: row.asset_type_name,
+      value: parseInt(row.expended_quantity) || 0,
+      category: row.category,
+      unit: row.unit_of_measure
+    }));
 
     res.json({
       success: true,
-      data: {
-        opening_balance,
-        closing_balance,
-        net_movement,
-        purchases,
-        transfers_in,
-        transfers_out,
-        assigned,
-        expended
-      }
+      data: chartData
     });
 
   } catch (error) {
-    logger.error('Dashboard summary error:', error);
+    logger.error('Dashboard expended assets error:', error);
     res.status(500).json({
       success: false,
       error: 'Server error'

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -27,18 +27,23 @@ import {
   CircularProgress,
   Card,
   CardContent,
+  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  CheckCircle as ApproveIcon,
-  CheckCircle as CheckCircleIcon,
-  Cancel as RejectIcon,
+  Visibility as ViewIcon,
+  Search as SearchIcon,
   FilterList as FilterIcon,
+  CheckCircle as ApproveIcon,
+  Cancel as RejectIcon,
 } from '@mui/icons-material';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import FilterBar from '../components/FilterBar.tsx';
 
 interface Transfer {
   id: string;
@@ -288,6 +293,23 @@ const Transfers: React.FC = () => {
     );
   };
 
+  const handleFiltersChange = (filters: {
+    base_id: string;
+    asset_type_id: string;
+    start_date: Date | null;
+    end_date: Date | null;
+  }) => {
+    setFilters({
+      ...filters,
+      from_base_id: filters.base_id,
+      to_base_id: '',
+      asset_type_id: filters.asset_type_id,
+      status: '',
+      start_date: filters.start_date ? filters.start_date.toISOString().split('T')[0] : '',
+      end_date: filters.end_date ? filters.end_date.toISOString().split('T')[0] : ''
+    });
+  };
+
   if (loading && transfers.length === 0) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -299,7 +321,7 @@ const Transfers: React.FC = () => {
   return (
     <Box>
       <Typography variant="h4" gutterBottom sx={{ fontWeight: 'bold', mb: 3 }}>
-        Asset Transfers
+        Asset Transfers {user?.role === 'logistics_officer' && '(View Only)'}
       </Typography>
 
       {error && (
@@ -315,107 +337,24 @@ const Transfers: React.FC = () => {
             <FilterIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
             Filters
           </Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={2}>
-              <FormControl fullWidth>
-                <InputLabel>From Base</InputLabel>
-                <Select
-                  value={filters.from_base_id}
-                  label="From Base"
-                  onChange={(e) => setFilters({ ...filters, from_base_id: e.target.value })}
-                >
-                  <MenuItem value="">All Bases</MenuItem>
-                  {bases.map((base) => (
-                    <MenuItem key={base.id} value={base.id}>
-                      {base.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={2}>
-              <FormControl fullWidth>
-                <InputLabel>To Base</InputLabel>
-                <Select
-                  value={filters.to_base_id}
-                  label="To Base"
-                  onChange={(e) => setFilters({ ...filters, to_base_id: e.target.value })}
-                >
-                  <MenuItem value="">All Bases</MenuItem>
-                  {bases.map((base) => (
-                    <MenuItem key={base.id} value={base.id}>
-                      {base.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={2}>
-              <FormControl fullWidth>
-                <InputLabel>Asset Type</InputLabel>
-                <Select
-                  value={filters.asset_type_id}
-                  label="Asset Type"
-                  onChange={(e) => setFilters({ ...filters, asset_type_id: e.target.value })}
-                >
-                  <MenuItem value="">All Types</MenuItem>
-                  {assetTypes.map((type) => (
-                    <MenuItem key={type.id} value={type.id}>
-                      {type.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={2}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={filters.status}
-                  label="Status"
-                  onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                >
-                  <MenuItem value="">All Status</MenuItem>
-                  <MenuItem value="pending">Pending</MenuItem>
-                  <MenuItem value="approved">Approved</MenuItem>
-                  <MenuItem value="completed">Completed</MenuItem>
-                  <MenuItem value="rejected">Rejected</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={2}>
-              <TextField
-                fullWidth
-                label="Start Date"
-                type="date"
-                value={filters.start_date}
-                onChange={(e) => setFilters({ ...filters, start_date: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={2}>
-              <TextField
-                fullWidth
-                label="End Date"
-                type="date"
-                value={filters.end_date}
-                onChange={(e) => setFilters({ ...filters, end_date: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-          </Grid>
+          <FilterBar
+            onFiltersChange={handleFiltersChange}
+            title="Transfer Filters"
+          />
         </CardContent>
       </Card>
 
       {/* Actions */}
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-        >
-          Create Transfer
-        </Button>
+        {(user?.role === 'admin' || user?.role === 'base_commander') && (
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => handleOpenDialog()}
+          >
+            Create Transfer
+          </Button>
+        )}
       </Box>
 
       {/* Transfers Table */}
@@ -449,7 +388,7 @@ const Transfers: React.FC = () => {
                   </TableCell>
                   <TableCell>{formatDate(transfer.transfer_date)}</TableCell>
                   <TableCell>
-                    {canApprove(transfer) && (
+                    {user?.role === 'admin' && canApprove(transfer) && (
                       <IconButton
                         size="small"
                         onClick={() => handleApproveTransfer(transfer.id)}
@@ -459,7 +398,7 @@ const Transfers: React.FC = () => {
                         <ApproveIcon />
                       </IconButton>
                     )}
-                    {canApprove(transfer) && (
+                    {user?.role === 'admin' && canApprove(transfer) && (
                       <IconButton
                         size="small"
                         onClick={() => handleRejectTransfer(transfer.id)}
@@ -469,33 +408,36 @@ const Transfers: React.FC = () => {
                         <RejectIcon />
                       </IconButton>
                     )}
-                    {canComplete(transfer) && (
+                    {user?.role === 'admin' && canComplete(transfer) && (
                       <IconButton
                         size="small"
                         onClick={() => handleCompleteTransfer(transfer.id)}
                         color="primary"
                         title="Complete"
                       >
-                        <CheckCircleIcon />
+                        <ApproveIcon />
                       </IconButton>
                     )}
-                    <IconButton
-                      size="small"
-                      onClick={() => handleOpenDialog(transfer)}
-                      color="primary"
-                      title="Edit"
-                    >
-                      <EditIcon />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      onClick={() => handleDeleteTransfer(transfer.id)}
-                      color="error"
-                      title="Delete"
-                      disabled={user?.role === 'logistics_officer'}
-                    >
-                      <DeleteIcon />
-                    </IconButton>
+                    {(user?.role === 'admin' || user?.role === 'base_commander') && (
+                      <IconButton
+                        size="small"
+                        onClick={() => handleOpenDialog(transfer)}
+                        color="primary"
+                        title="Edit"
+                      >
+                        <EditIcon />
+                      </IconButton>
+                    )}
+                    {(user?.role === 'admin' || user?.role === 'base_commander') && (
+                      <IconButton
+                        size="small"
+                        onClick={() => handleDeleteTransfer(transfer.id)}
+                        color="error"
+                        title="Delete"
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -516,7 +458,7 @@ const Transfers: React.FC = () => {
       {/* Create/Edit Transfer Dialog */}
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
         <DialogTitle>
-          {editingTransfer ? 'Edit Transfer' : 'Create New Transfer'}
+          {editingTransfer ? 'Edit Transfer' : 'Create New Transfer'} {user?.role === 'base_commander' && '(Requires Admin Approval)'}
         </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>

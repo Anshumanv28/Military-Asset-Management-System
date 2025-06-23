@@ -132,51 +132,73 @@ const seedDatabase = async () => {
       assetTypeIds.push(result.rows[0].id);
     }
 
-    // Create sample assets
-    const assets = [
-      { asset_type_id: assetTypeIds[0], serial_number: 'M4-001', name: 'M4 Carbine #001', current_base_id: baseIds[0] },
-      { asset_type_id: assetTypeIds[0], serial_number: 'M4-002', name: 'M4 Carbine #002', current_base_id: baseIds[0] },
-      { asset_type_id: assetTypeIds[2], serial_number: 'HMMWV-001', name: 'HMMWV #001', current_base_id: baseIds[1] },
-      { asset_type_id: assetTypeIds[3], serial_number: 'NVG-001', name: 'Night Vision Goggles #001', current_base_id: baseIds[0] }
+    // Create initial asset quantities for each base
+    const initialAssets = [
+      // Fort Bragg assets
+      { asset_type_id: assetTypeIds[0], base_id: baseIds[0], quantity: 150, available_quantity: 120, assigned_quantity: 30 }, // M4 Carbines
+      { asset_type_id: assetTypeIds[1], base_id: baseIds[0], quantity: 50000, available_quantity: 45000, assigned_quantity: 5000 }, // 9mm Ammo
+      { asset_type_id: assetTypeIds[2], base_id: baseIds[0], quantity: 25, available_quantity: 20, assigned_quantity: 5 }, // HMMWVs
+      { asset_type_id: assetTypeIds[3], base_id: baseIds[0], quantity: 200, available_quantity: 180, assigned_quantity: 20 }, // Night Vision
+      { asset_type_id: assetTypeIds[4], base_id: baseIds[0], quantity: 300, available_quantity: 250, assigned_quantity: 50 }, // Body Armor
+      { asset_type_id: assetTypeIds[5], base_id: baseIds[0], quantity: 100000, available_quantity: 90000, assigned_quantity: 10000 }, // 5.56mm Ammo
+      
+      // Camp Pendleton assets
+      { asset_type_id: assetTypeIds[0], base_id: baseIds[1], quantity: 120, available_quantity: 100, assigned_quantity: 20 }, // M4 Carbines
+      { asset_type_id: assetTypeIds[1], base_id: baseIds[1], quantity: 40000, available_quantity: 35000, assigned_quantity: 5000 }, // 9mm Ammo
+      { asset_type_id: assetTypeIds[2], base_id: baseIds[1], quantity: 20, available_quantity: 15, assigned_quantity: 5 }, // HMMWVs
+      { asset_type_id: assetTypeIds[3], base_id: baseIds[1], quantity: 150, available_quantity: 130, assigned_quantity: 20 }, // Night Vision
+      { asset_type_id: assetTypeIds[4], base_id: baseIds[1], quantity: 250, available_quantity: 200, assigned_quantity: 50 }, // Body Armor
+      { asset_type_id: assetTypeIds[5], base_id: baseIds[1], quantity: 80000, available_quantity: 70000, assigned_quantity: 10000 }, // 5.56mm Ammo
+      
+      // Fort Hood assets
+      { asset_type_id: assetTypeIds[0], base_id: baseIds[2], quantity: 100, available_quantity: 80, assigned_quantity: 20 }, // M4 Carbines
+      { asset_type_id: assetTypeIds[1], base_id: baseIds[2], quantity: 30000, available_quantity: 25000, assigned_quantity: 5000 }, // 9mm Ammo
+      { asset_type_id: assetTypeIds[2], base_id: baseIds[2], quantity: 15, available_quantity: 12, assigned_quantity: 3 }, // HMMWVs
+      { asset_type_id: assetTypeIds[3], base_id: baseIds[2], quantity: 100, available_quantity: 85, assigned_quantity: 15 }, // Night Vision
+      { asset_type_id: assetTypeIds[4], base_id: baseIds[2], quantity: 200, available_quantity: 160, assigned_quantity: 40 }, // Body Armor
+      { asset_type_id: assetTypeIds[5], base_id: baseIds[2], quantity: 60000, available_quantity: 50000, assigned_quantity: 10000 }, // 5.56mm Ammo
+      
+      // Joint Base Lewis-McChord assets
+      { asset_type_id: assetTypeIds[0], base_id: baseIds[3], quantity: 80, available_quantity: 65, assigned_quantity: 15 }, // M4 Carbines
+      { asset_type_id: assetTypeIds[1], base_id: baseIds[3], quantity: 25000, available_quantity: 20000, assigned_quantity: 5000 }, // 9mm Ammo
+      { asset_type_id: assetTypeIds[2], base_id: baseIds[3], quantity: 12, available_quantity: 10, assigned_quantity: 2 }, // HMMWVs
+      { asset_type_id: assetTypeIds[3], base_id: baseIds[3], quantity: 80, available_quantity: 70, assigned_quantity: 10 }, // Night Vision
+      { asset_type_id: assetTypeIds[4], base_id: baseIds[3], quantity: 150, available_quantity: 120, assigned_quantity: 30 }, // Body Armor
+      { asset_type_id: assetTypeIds[5], base_id: baseIds[3], quantity: 50000, available_quantity: 40000, assigned_quantity: 10000 }, // 5.56mm Ammo
     ];
 
-    const assetIds = [];
-    for (const asset of assets) {
-      if (asset.asset_type_id && asset.current_base_id) {
-        const result = await query(`
-          INSERT INTO assets (asset_type_id, serial_number, name, current_base_id)
-          VALUES ($1, $2, $3, $4)
-          ON CONFLICT (serial_number) DO UPDATE SET 
-            asset_type_id = EXCLUDED.asset_type_id,
-            name = EXCLUDED.name,
-            current_base_id = EXCLUDED.current_base_id
-          RETURNING id
-        `, [asset.asset_type_id, asset.serial_number, asset.name, asset.current_base_id]);
-        
-        if (result.rows[0]) {
-          assetIds.push(result.rows[0].id);
-        }
+    for (const asset of initialAssets) {
+      if (asset.asset_type_id && asset.base_id) {
+        await query(`
+          INSERT INTO assets (asset_type_id, base_id, quantity, available_quantity, assigned_quantity)
+          VALUES ($1, $2, $3, $4, $5)
+          ON CONFLICT (asset_type_id, base_id) DO UPDATE SET 
+            quantity = EXCLUDED.quantity,
+            available_quantity = EXCLUDED.available_quantity,
+            assigned_quantity = EXCLUDED.assigned_quantity
+        `, [asset.asset_type_id, asset.base_id, asset.quantity, asset.available_quantity, asset.assigned_quantity]);
       }
     }
 
     // Create sample assignments
     const assignments = [
-      { asset_id: assetIds[0], assigned_to: personnelIds[0], base_id: baseIds[0], assignment_date: '2024-01-15', status: 'active' },
-      { asset_id: assetIds[1], assigned_to: personnelIds[1], base_id: baseIds[0], assignment_date: '2024-01-20', status: 'active' },
-      { asset_id: assetIds[2], assigned_to: personnelIds[2], base_id: baseIds[1], assignment_date: '2024-02-01', status: 'active' },
-      { asset_id: assetIds[3], assigned_to: personnelIds[3], base_id: baseIds[1], assignment_date: '2024-02-05', status: 'returned', return_date: '2024-02-15' }
+      { asset_type_id: assetTypeIds[0], assigned_to: personnelIds[0], base_id: baseIds[0], quantity: 1, assignment_date: '2024-01-15', status: 'active' },
+      { asset_type_id: assetTypeIds[4], assigned_to: personnelIds[1], base_id: baseIds[0], quantity: 1, assignment_date: '2024-01-20', status: 'active' },
+      { asset_type_id: assetTypeIds[2], assigned_to: personnelIds[2], base_id: baseIds[1], quantity: 1, assignment_date: '2024-02-01', status: 'active' },
+      { asset_type_id: assetTypeIds[3], assigned_to: personnelIds[3], base_id: baseIds[1], quantity: 1, assignment_date: '2024-02-05', status: 'returned', return_date: '2024-02-15' }
     ];
 
     for (const assignment of assignments) {
-      if (assignment.asset_id && assignment.assigned_to && assignment.base_id) {
+      if (assignment.asset_type_id && assignment.assigned_to && assignment.base_id) {
         await query(`
-          INSERT INTO assignments (asset_id, assigned_to, assigned_by, base_id, assignment_date, return_date, status)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          INSERT INTO assignments (asset_type_id, assigned_to, assigned_by, base_id, quantity, assignment_date, return_date, status)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [
-          assignment.asset_id,
+          assignment.asset_type_id,
           assignment.assigned_to,
           adminUserId || '00000000-0000-0000-0000-000000000000',
           assignment.base_id,
+          assignment.quantity,
           assignment.assignment_date,
           assignment.return_date || null,
           assignment.status
@@ -184,25 +206,22 @@ const seedDatabase = async () => {
       }
     }
 
-    // Create sample purchases
+    // Create sample purchases (Create operations)
     const purchases = [
-      { asset_type_id: assetTypeIds[1], base_id: baseIds[0], quantity: 1000, unit_cost: 0.50, supplier: 'AmmoCorp', purchase_date: '2024-01-15' },
-      { asset_type_id: assetTypeIds[5], base_id: baseIds[1], quantity: 2000, unit_cost: 0.75, supplier: 'AmmoCorp', purchase_date: '2024-01-20' },
-      { asset_type_id: assetTypeIds[4], base_id: baseIds[0], quantity: 50, unit_cost: 500.00, supplier: 'ProtectGear', purchase_date: '2024-02-01' }
+      { asset_type_id: assetTypeIds[1], base_id: baseIds[0], quantity: 1000, supplier: 'AmmoCorp', purchase_date: '2024-01-15' },
+      { asset_type_id: assetTypeIds[5], base_id: baseIds[1], quantity: 2000, supplier: 'AmmoCorp', purchase_date: '2024-01-20' },
+      { asset_type_id: assetTypeIds[4], base_id: baseIds[0], quantity: 50, supplier: 'ProtectGear', purchase_date: '2024-02-01' }
     ];
 
     for (const purchase of purchases) {
       if (purchase.asset_type_id && purchase.base_id) {
-        const total_cost = purchase.quantity * purchase.unit_cost;
         await query(`
-          INSERT INTO purchases (asset_type_id, base_id, quantity, unit_cost, total_cost, supplier, purchase_date, created_by)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          INSERT INTO purchases (asset_type_id, base_id, quantity, supplier, purchase_date, created_by)
+          VALUES ($1, $2, $3, $4, $5, $6)
         `, [
           purchase.asset_type_id,
           purchase.base_id,
           purchase.quantity,
-          purchase.unit_cost,
-          total_cost,
           purchase.supplier,
           purchase.purchase_date,
           adminUserId || '00000000-0000-0000-0000-000000000000'
@@ -210,20 +229,35 @@ const seedDatabase = async () => {
       }
     }
 
-    // Create sample transfers
+    // Create sample transfers (Update operations)
     const transfers = [
-      { from_base_id: baseIds[0], to_base_id: baseIds[1], asset_type_id: assetTypeIds[1], quantity: 500, transfer_date: '2024-02-15', status: 'completed' },
-      { from_base_id: baseIds[1], to_base_id: baseIds[0], asset_type_id: assetTypeIds[5], quantity: 1000, transfer_date: '2024-02-20', status: 'pending' }
+      { 
+        transfer_number: 'TR-001', 
+        from_base_id: baseIds[0], 
+        to_base_id: baseIds[1], 
+        asset_type_id: assetTypeIds[1], 
+        quantity: 500, 
+        transfer_date: '2024-01-25',
+        status: 'completed'
+      },
+      { 
+        transfer_number: 'TR-002', 
+        from_base_id: baseIds[1], 
+        to_base_id: baseIds[2], 
+        asset_type_id: assetTypeIds[3], 
+        quantity: 10, 
+        transfer_date: '2024-02-10',
+        status: 'completed'
+      }
     ];
 
     for (const transfer of transfers) {
       if (transfer.from_base_id && transfer.to_base_id && transfer.asset_type_id) {
-        const transferNumber = `TRF-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         await query(`
           INSERT INTO transfers (transfer_number, from_base_id, to_base_id, asset_type_id, quantity, transfer_date, status, created_by)
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [
-          transferNumber,
+          transfer.transfer_number,
           transfer.from_base_id,
           transfer.to_base_id,
           transfer.asset_type_id,
@@ -235,10 +269,11 @@ const seedDatabase = async () => {
       }
     }
 
-    // Create sample expenditures
+    // Create sample expenditures (Delete operations)
     const expenditures = [
-      { asset_type_id: assetTypeIds[1], base_id: baseIds[0], quantity: 100, reason: 'Training exercise', expenditure_date: '2024-02-10' },
-      { asset_type_id: assetTypeIds[5], base_id: baseIds[1], quantity: 200, reason: 'Range qualification', expenditure_date: '2024-02-12' }
+      { asset_type_id: assetTypeIds[1], base_id: baseIds[0], quantity: 100, expenditure_date: '2024-01-30', reason: 'Training exercise' },
+      { asset_type_id: assetTypeIds[5], base_id: baseIds[1], quantity: 200, expenditure_date: '2024-02-15', reason: 'Range qualification' },
+      { asset_type_id: assetTypeIds[4], base_id: baseIds[0], quantity: 5, expenditure_date: '2024-02-20', reason: 'Damaged in field training' }
     ];
 
     for (const expenditure of expenditures) {
@@ -257,77 +292,11 @@ const seedDatabase = async () => {
       }
     }
 
-    // Create test users for RBAC
-    const testUsers = [
-      {
-        username: 'commander1',
-        email: 'commander1@military.gov',
-        password: 'password123',
-        first_name: 'John',
-        last_name: 'Commander',
-        role: 'base_commander',
-        base_id: baseIds[0] // Fort Bragg
-      },
-      {
-        username: 'logistics1',
-        email: 'logistics1@military.gov',
-        password: 'password123',
-        first_name: 'Sarah',
-        last_name: 'Logistics',
-        role: 'logistics_officer',
-        base_id: baseIds[2] // Fort Hood
-      },
-      {
-        username: 'commander2',
-        email: 'commander2@military.gov',
-        password: 'password123',
-        first_name: 'Mike',
-        last_name: 'Commander',
-        role: 'base_commander',
-        base_id: baseIds[3] // Joint Base Lewis-McChord
-      }
-    ];
-
-    for (const userData of testUsers) {
-      const hashedPassword = await bcrypt.hash(userData.password, 10);
-      await query(`
-        INSERT INTO users (username, email, password_hash, first_name, last_name, role, base_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (username) DO UPDATE SET 
-          email = EXCLUDED.email,
-          password_hash = EXCLUDED.password_hash,
-          first_name = EXCLUDED.first_name,
-          last_name = EXCLUDED.last_name,
-          role = EXCLUDED.role,
-          base_id = EXCLUDED.base_id
-      `, [userData.username, userData.email, hashedPassword, userData.first_name, userData.last_name, userData.role, userData.base_id]);
-    }
-
-    logger.info('✅ Test users created successfully');
-    logger.info('   - Admin: admin / admin123');
-    logger.info('   - Base Commander 1: commander1 / password123 (Fort Bragg)');
-    logger.info('   - Logistics Officer: logistics1 / password123 (Fort Hood)');
-    logger.info('   - Base Commander 2: commander2 / password123 (Joint Base Lewis-McChord)');
-
-    logger.info('✅ Database seeding completed successfully');
-    logger.info('📋 Sample data created:');
-    logger.info('   - Admin user: admin / admin123');
-    logger.info('   - Base commanders: commander1, commander2 / password123');
-    logger.info('   - Logistics officers: logistics1, logistics2 / password123');
-    logger.info('   - 4 military bases');
-    logger.info('   - 8 personnel records');
-    logger.info('   - 6 asset types');
-    logger.info('   - Sample assets, assignments, purchases, transfers, and expenditures');
-
+    logger.info('Database seeding completed successfully');
   } catch (error) {
-    logger.error('❌ Database seeding failed:', error);
-    process.exit(1);
+    logger.error('Error seeding database:', error);
+    throw error;
   }
 };
 
-// Run seeding if this file is executed directly
-if (require.main === module) {
-  seedDatabase();
-}
-
-export { seedDatabase };
+export default seedDatabase;

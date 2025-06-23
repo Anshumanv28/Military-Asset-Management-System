@@ -43,6 +43,7 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import FilterBar from '../components/FilterBar.tsx';
 
 interface Purchase {
   id: string;
@@ -279,6 +280,22 @@ const Purchases: React.FC = () => {
     }).format(amount);
   };
 
+  const handleFiltersChange = (filters: {
+    base_id: string;
+    asset_type_id: string;
+    start_date: Date | null;
+    end_date: Date | null;
+  }) => {
+    setFilters({
+      ...filters,
+      base_id: filters.base_id,
+      asset_type_id: filters.asset_type_id,
+      start_date: filters.start_date ? filters.start_date.toISOString().split('T')[0] : '',
+      end_date: filters.end_date ? filters.end_date.toISOString().split('T')[0] : '',
+      status: ''
+    });
+  };
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -306,83 +323,11 @@ const Purchases: React.FC = () => {
             <FilterIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
             Filters
           </Typography>
-          <Grid container spacing={2}>
-            {user?.role === 'admin' && (
-              <Grid item xs={12} sm={3}>
-                <FormControl fullWidth>
-                  <InputLabel>Base</InputLabel>
-                  <Select
-                    value={filters.base_id}
-                    label="Base"
-                    onChange={(e) => setFilters({ ...filters, base_id: e.target.value })}
-                  >
-                    <MenuItem value="">All Bases</MenuItem>
-                    {bases.map((base) => (
-                      <MenuItem key={base.id} value={base.id}>
-                        {base.name}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-            )}
-            <Grid item xs={12} sm={3}>
-              <FormControl fullWidth>
-                <InputLabel>Asset Type</InputLabel>
-                <Select
-                  value={filters.asset_type_id}
-                  label="Asset Type"
-                  onChange={(e) => setFilters({ ...filters, asset_type_id: e.target.value })}
-                >
-                  <MenuItem value="">All Types</MenuItem>
-                  {assetTypes.map((type) => (
-                    <MenuItem key={type.id} value={type.id}>
-                      {type.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <TextField
-                fullWidth
-                label="Start Date"
-                type="date"
-                value={filters.start_date}
-                onChange={(e) => setFilters({ ...filters, start_date: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <TextField
-                fullWidth
-                label="End Date"
-                type="date"
-                value={filters.end_date}
-                onChange={(e) => setFilters({ ...filters, end_date: e.target.value })}
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={3}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select
-                  value={filters.status}
-                  label="Status"
-                  onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                >
-                  <MenuItem value="">All Statuses</MenuItem>
-                  <MenuItem value="pending">Pending</MenuItem>
-                  <MenuItem value="approved">Approved</MenuItem>
-                  <MenuItem value="cancelled">Cancelled</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-          </Grid>
+          <FilterBar
+            onFiltersChange={handleFiltersChange}
+            title="Purchase Filters"
+          />
           <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
-            <Button variant="outlined" onClick={handleClearFilters}>
-              Clear Filters
-            </Button>
             <Typography variant="body2" sx={{ alignSelf: 'center', ml: 2 }}>
               Showing {filteredPurchases.length} of {allPurchases.length} purchases
             </Typography>
@@ -392,13 +337,15 @@ const Purchases: React.FC = () => {
 
       {/* Actions */}
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-        >
-          New Purchase
-        </Button>
+        {user?.role !== 'logistics_officer' && (
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => handleOpenDialog()}
+          >
+            New Purchase
+          </Button>
+        )}
       </Box>
 
       {/* Purchases Table */}
@@ -462,23 +409,26 @@ const Purchases: React.FC = () => {
                       </Tooltip>
                     </>
                   )}
-                  <IconButton
-                    size="small"
-                    onClick={() => handleOpenDialog(purchase)}
-                    color="primary"
-                    title="Edit"
-                  >
-                    <EditIcon />
-                  </IconButton>
-                  <IconButton
-                    size="small"
-                    onClick={() => handleDelete(purchase.id)}
-                    color="error"
-                    title="Delete"
-                    disabled={user?.role === 'logistics_officer'}
-                  >
-                    <DeleteIcon />
-                  </IconButton>
+                  {user?.role !== 'logistics_officer' && (
+                    <>
+                      <IconButton
+                        size="small"
+                        onClick={() => handleOpenDialog(purchase)}
+                        color="primary"
+                        title="Edit"
+                      >
+                        <EditIcon />
+                      </IconButton>
+                      <IconButton
+                        size="small"
+                        onClick={() => handleDelete(purchase.id)}
+                        color="error"
+                        title="Delete"
+                      >
+                        <DeleteIcon />
+                      </IconButton>
+                    </>
+                  )}
                 </TableCell>
               </TableRow>
             ))}

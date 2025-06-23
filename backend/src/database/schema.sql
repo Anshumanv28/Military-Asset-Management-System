@@ -36,7 +36,8 @@ ALTER TABLE bases ADD CONSTRAINT fk_bases_commander_id FOREIGN KEY (commander_id
 -- Personnel table for managing military personnel
 CREATE TABLE personnel (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL,
+    last_name VARCHAR(100) NOT NULL,
     rank VARCHAR(50) NOT NULL,
     base_id UUID NOT NULL REFERENCES bases(id),
     email VARCHAR(255),
@@ -44,7 +45,8 @@ CREATE TABLE personnel (
     department VARCHAR(100),
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(first_name, last_name, email)
 );
 
 -- Asset types table for categorizing equipment
@@ -59,30 +61,26 @@ CREATE TABLE asset_types (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Assets table for individual asset instances
+-- Assets table for quantity-based inventory tracking
 CREATE TABLE assets (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     asset_type_id UUID NOT NULL REFERENCES asset_types(id),
-    serial_number VARCHAR(100) UNIQUE,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    current_base_id UUID REFERENCES bases(id),
-    status VARCHAR(20) NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'assigned', 'maintenance', 'retired')),
-    purchase_date DATE,
-    purchase_cost DECIMAL(12,2),
-    current_value DECIMAL(12,2),
+    base_id UUID NOT NULL REFERENCES bases(id),
+    quantity INTEGER NOT NULL DEFAULT 0,
+    available_quantity INTEGER NOT NULL DEFAULT 0,
+    assigned_quantity INTEGER NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'available' CHECK (status IN ('available', 'low_stock', 'out_of_stock')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(asset_type_id, base_id)
 );
 
--- Purchases table for asset procurement
+-- Purchases table for asset procurement (Create operation)
 CREATE TABLE purchases (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     asset_type_id UUID NOT NULL REFERENCES asset_types(id),
     base_id UUID NOT NULL REFERENCES bases(id),
     quantity INTEGER NOT NULL,
-    unit_cost DECIMAL(12,2) NOT NULL,
-    total_cost DECIMAL(12,2) NOT NULL,
     supplier VARCHAR(255),
     purchase_date DATE NOT NULL,
     delivery_date DATE,
@@ -96,7 +94,7 @@ CREATE TABLE purchases (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Transfers table for inter-base movements
+-- Transfers table for inter-base movements (Update operation)
 CREATE TABLE transfers (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     transfer_number VARCHAR(50) UNIQUE NOT NULL,
@@ -114,36 +112,28 @@ CREATE TABLE transfers (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Transfer items table for detailed transfer tracking
-CREATE TABLE transfer_items (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    transfer_id UUID NOT NULL REFERENCES transfers(id) ON DELETE CASCADE,
-    asset_id UUID REFERENCES assets(id),
-    asset_type_id UUID NOT NULL REFERENCES asset_types(id),
-    quantity INTEGER NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 -- Assignments table for personnel asset assignments
 CREATE TABLE assignments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    asset_id UUID NOT NULL REFERENCES assets(id),
-    personnel_id UUID NOT NULL REFERENCES personnel(id),
+    asset_type_id UUID NOT NULL REFERENCES asset_types(id),
+    assigned_to UUID NOT NULL REFERENCES personnel(id),
     assigned_by UUID NOT NULL REFERENCES users(id),
     base_id UUID NOT NULL REFERENCES bases(id),
+    quantity INTEGER NOT NULL DEFAULT 1,
+    expended_quantity INTEGER NOT NULL DEFAULT 0,
     assignment_date DATE NOT NULL,
-    return_date DATE,
-    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'returned', 'lost', 'damaged')),
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'partially_expended', 'expended', 'lost', 'damaged')),
     notes TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Expenditures table for asset consumption tracking
+-- Expenditures table for asset consumption tracking (Delete operation)
 CREATE TABLE expenditures (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     asset_type_id UUID NOT NULL REFERENCES asset_types(id),
     base_id UUID NOT NULL REFERENCES bases(id),
+    personnel_id UUID REFERENCES personnel(id), -- Personnel who expended the assets
     quantity INTEGER NOT NULL,
     expenditure_date DATE NOT NULL,
     reason VARCHAR(255) NOT NULL,
@@ -174,7 +164,8 @@ CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_base_id ON users(base_id);
 
-CREATE INDEX idx_personnel_name ON personnel(name);
+CREATE INDEX idx_personnel_first_name ON personnel(first_name);
+CREATE INDEX idx_personnel_last_name ON personnel(last_name);
 CREATE INDEX idx_personnel_rank ON personnel(rank);
 CREATE INDEX idx_personnel_base_id ON personnel(base_id);
 CREATE INDEX idx_personnel_is_active ON personnel(is_active);
@@ -183,9 +174,8 @@ CREATE INDEX idx_bases_code ON bases(code);
 CREATE INDEX idx_bases_commander_id ON bases(commander_id);
 
 CREATE INDEX idx_assets_asset_type_id ON assets(asset_type_id);
-CREATE INDEX idx_assets_current_base_id ON assets(current_base_id);
+CREATE INDEX idx_assets_base_id ON assets(base_id);
 CREATE INDEX idx_assets_status ON assets(status);
-CREATE INDEX idx_assets_serial_number ON assets(serial_number);
 
 CREATE INDEX idx_purchases_base_id ON purchases(base_id);
 CREATE INDEX idx_purchases_asset_type_id ON purchases(asset_type_id);
@@ -199,11 +189,8 @@ CREATE INDEX idx_transfers_status ON transfers(status);
 CREATE INDEX idx_transfers_transfer_date ON transfers(transfer_date);
 CREATE INDEX idx_transfers_created_by ON transfers(created_by);
 
-CREATE INDEX idx_transfer_items_transfer_id ON transfer_items(transfer_id);
-CREATE INDEX idx_transfer_items_asset_id ON transfer_items(asset_id);
-
-CREATE INDEX idx_assignments_asset_id ON assignments(asset_id);
-CREATE INDEX idx_assignments_personnel_id ON assignments(personnel_id);
+CREATE INDEX idx_assignments_asset_type_id ON assignments(asset_type_id);
+CREATE INDEX idx_assignments_assigned_to ON assignments(assigned_to);
 CREATE INDEX idx_assignments_base_id ON assignments(base_id);
 CREATE INDEX idx_assignments_assigned_by ON assignments(assigned_by);
 CREATE INDEX idx_assignments_status ON assignments(status);
@@ -218,7 +205,7 @@ CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_table_name ON audit_logs(table_name);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
 
--- Triggers for updated_at timestamps
+-- Function to update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -227,6 +214,7 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+-- Triggers to automatically update updated_at
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_personnel_updated_at BEFORE UPDATE ON personnel FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_bases_updated_at BEFORE UPDATE ON bases FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

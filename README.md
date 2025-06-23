@@ -1,230 +1,107 @@
 # Military Asset Management System
 
-A comprehensive web-based system for managing military assets including vehicles, weapons, and ammunition across multiple bases with role-based access control.
+A comprehensive asset management system designed for military organizations to track, manage, and maintain their equipment and resources.
 
-## 🎯 Project Overview
+## Features
 
-The Military Asset Management System enables commanders and logistics personnel to:
-- Track asset movements, assignments, and expenditures
-- Manage transfers between bases with full audit trails
-- Monitor opening/closing balances and net movements
-- Ensure accountability through role-based access control
+- **Asset Management**: Track equipment quantities, locations, and status
+- **Purchase Management**: Manage procurement requests and approvals
+- **Transfer System**: Handle asset transfers between bases
+- **Assignment Tracking**: Assign assets to personnel
+- **Expenditure Tracking**: Monitor asset consumption and usage
+- **Role-Based Access**: Admin, Base Commander, and Logistics Officer roles
+- **Dashboard Analytics**: Real-time insights and reporting
 
-## 🏗️ System Architecture
-
-### Tech Stack
-- **Frontend**: React 18 + TypeScript + Material-UI
-- **Backend**: Node.js + Express + TypeScript
-- **Database**: PostgreSQL 15
-- **Authentication**: JWT with RBAC middleware
-- **Deployment**: Docker + Docker Compose
-
-### Core Features
-1. **Dashboard** - Key metrics with filtering and detailed pop-ups
-2. **Purchases** - Asset procurement tracking
-3. **Transfers** - Inter-base asset movement
-4. **Assignments & Expenditures** - Personnel asset tracking
-5. **RBAC** - Role-based access control (Admin, Base Commander, Logistics Officer)
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- Node.js 18+
+
+- Docker and Docker Compose
+- Node.js 18+ (for development)
 - PostgreSQL 15+
-- Docker & Docker Compose (optional)
 
-### Local Development Setup
+### Production Deployment
 
-1. **Clone and Install Dependencies**
-```bash
-git clone <repository-url>
-cd military-asset-management-system
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd Military-Asset-Management-System
+   ```
 
-# Install backend dependencies
-cd backend
-npm install
+2. **Configure environment variables**
+   ```bash
+   # Backend
+   cp backend/env.example backend/.env
+   # Edit backend/.env with your production values
+   
+   # Frontend
+   cp frontend/env.example frontend/.env
+   # Edit frontend/.env with your production values
+   ```
 
-# Install frontend dependencies
-cd ../frontend
-npm install
-```
+3. **Deploy with Docker**
+   ```bash
+   chmod +x deploy.sh
+   ./deploy.sh
+   ```
 
-2. **Database Setup**
-```bash
-# Create database
-createdb military_assets_db
+4. **Access the application**
+   - Frontend: http://localhost:3000
+   - Backend API: http://localhost:3001
+   - Health Check: http://localhost:3001/health
 
-# Run migrations
-cd backend
-npm run migrate
-npm run seed
-```
+### Development Setup
 
-3. **Environment Configuration**
-```bash
-# Backend (.env)
-cp backend/.env.example backend/.env
-# Edit with your database credentials
+1. **Install dependencies**
+   ```bash
+   # Backend
+   cd backend
+   npm install
+   
+   # Frontend
+   cd frontend
+   npm install
+   ```
 
-# Frontend (.env)
-cp frontend/.env.example frontend/.env
-```
+2. **Start development servers**
+   ```bash
+   # Backend (Terminal 1)
+   cd backend
+   npm run dev
+   
+   # Frontend (Terminal 2)
+   cd frontend
+   npm start
+   ```
 
-4. **Start Development Servers**
-```bash
-# Terminal 1 - Backend
-cd backend
-npm run dev
+## Architecture
 
-# Terminal 2 - Frontend
-cd frontend
-npm start
-```
+- **Frontend**: React 18 with TypeScript, Material-UI
+- **Backend**: Node.js with Express, TypeScript
+- **Database**: PostgreSQL
+- **Authentication**: JWT-based
+- **Deployment**: Docker containers
 
-### Docker Deployment
-```bash
-docker-compose up -d
-```
+## API Documentation
 
-## 📊 Database Schema
+The API provides endpoints for:
+- Authentication (`/api/auth`)
+- Asset management (`/api/assets`)
+- Purchase management (`/api/purchases`)
+- Transfer management (`/api/transfers`)
+- Assignment tracking (`/api/assignments`)
+- Expenditure tracking (`/api/expenditures`)
+- Dashboard analytics (`/api/dashboard`)
 
-### Core Entities
-- **Users** - Authentication and role management
-- **Bases** - Military installation locations
-- **AssetTypes** - Equipment categories (vehicles, weapons, ammo)
-- **Assets** - Individual asset instances
-- **Purchases** - Asset procurement records
-- **Transfers** - Inter-base movements
-- **Assignments** - Personnel asset assignments
-- **Expenditures** - Asset consumption tracking
-- **AuditLogs** - Transaction history
+## Security
 
-## 🔐 Role-Based Access Control
+- JWT-based authentication
+- Role-based access control
+- Rate limiting
+- CORS protection
+- Input validation
+- SQL injection prevention
 
-### Roles & Permissions
-- **Admin**: Full system access
-- **Base Commander**: Base-specific data and operations
-- **Logistics Officer**: Limited purchase and transfer access
+## License
 
-### Security Features
-- JWT token authentication
-- Role-based API middleware
-- Request logging and audit trails
-- Input validation and sanitization
-
-## 📱 Features Overview
-
-### Dashboard
-- Real-time metrics display
-- Date, base, and equipment type filters
-- Interactive charts and graphs
-- Detailed movement breakdowns
-
-### Asset Management
-- Purchase recording and tracking
-- Transfer management between bases
-- Assignment and expenditure tracking
-- Historical data analysis
-
-### Reporting
-- Balance sheet reports
-- Movement summaries
-- Audit trails
-- Export capabilities
-
-## 🛠️ Development
-
-### Project Structure
-```
-military-asset-management-system/
-├── backend/                 # Node.js API server
-│   ├── src/
-│   │   ├── controllers/     # Route handlers
-│   │   ├── middleware/      # Auth & validation
-│   │   ├── models/          # Database models
-│   │   ├── routes/          # API endpoints
-│   │   └── utils/           # Helper functions
-│   ├── migrations/          # Database migrations
-│   └── seeds/              # Sample data
-├── frontend/               # React application
-│   ├── src/
-│   │   ├── components/     # Reusable UI components
-│   │   ├── pages/          # Page components
-│   │   ├── hooks/          # Custom React hooks
-│   │   ├── services/       # API integration
-│   │   └── utils/          # Helper functions
-│   └── public/             # Static assets
-├── docs/                   # Documentation
-└── docker-compose.yml      # Container orchestration
-```
-
-## 📝 API Documentation
-
-### Authentication Endpoints
-- `POST /api/auth/login` - User authentication
-- `POST /api/auth/refresh` - Token refresh
-- `GET /api/auth/profile` - User profile
-
-### Asset Management Endpoints
-- `GET /api/assets` - List assets with filters
-- `POST /api/assets/purchase` - Record purchase
-- `POST /api/assets/transfer` - Initiate transfer
-- `POST /api/assets/assign` - Assign asset to personnel
-- `POST /api/assets/expend` - Record expenditure
-
-### Dashboard Endpoints
-- `GET /api/dashboard/metrics` - Key performance indicators
-- `GET /api/dashboard/movements` - Movement breakdowns
-- `GET /api/dashboard/balances` - Balance summaries
-
-## 🔍 Testing
-
-```bash
-# Backend tests
-cd backend
-npm test
-
-# Frontend tests
-cd frontend
-npm test
-
-# E2E tests
-npm run test:e2e
-```
-
-## 📦 Deployment
-
-### Production Build
-```bash
-# Backend
-cd backend
-npm run build
-npm start
-
-# Frontend
-cd frontend
-npm run build
-```
-
-### Environment Variables
-- `DATABASE_URL` - PostgreSQL connection string
-- `JWT_SECRET` - JWT signing secret
-- `NODE_ENV` - Environment (development/production)
-- `PORT` - Server port (default: 3001)
-- `FRONTEND_URL` - Frontend application URL
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🆘 Support
-
-For technical support or questions, please open an issue in the repository or contact the development team. 
+MIT License 

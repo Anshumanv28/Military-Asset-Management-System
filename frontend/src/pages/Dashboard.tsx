@@ -8,11 +8,6 @@ import {
   CircularProgress,
   Alert,
   Paper,
-  Chip,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Button,
   Dialog,
   DialogTitle,
@@ -33,61 +28,48 @@ import {
   SwapHoriz,
   Assignment,
   RemoveCircle,
+  CheckCircle,
 } from '@mui/icons-material';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import FilterBar from '../components/FilterBar.tsx';
 
 interface DashboardMetrics {
   opening_balance: number;
   closing_balance: number;
   net_movement: number;
-  purchases: number;
+  total_assets: number;
+  available_assets: number;
+  assigned_assets: number;
+  maintenance_assets: number;
+  purchased_assets: number;
   transfers_in: number;
   transfers_out: number;
-  assigned: number;
-  expended: number;
-}
-
-interface Base {
-  id: string;
-  name: string;
-  code: string;
-}
-
-interface AssetType {
-  id: string;
-  name: string;
+  expended_assets: number;
 }
 
 interface MovementDetail {
   id: string;
+  name: string;
+  serial_number?: string;
   asset_type_name: string;
-  quantity: number;
-  date: string;
   base_name?: string;
   from_base_name?: string;
   to_base_name?: string;
+  date: string;
 }
 
 const Dashboard: React.FC = () => {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [bases, setBases] = useState<Base[]>([]);
-  const [selectedBase, setSelectedBase] = useState('');
-  const [startDate, setStartDate] = useState<Date | null>(null);
-  const [endDate, setEndDate] = useState<Date | null>(null);
-  const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
-  const [selectedAssetType, setSelectedAssetType] = useState('');
   const [showMovementDetails, setShowMovementDetails] = useState(false);
   const [movementDetails, setMovementDetails] = useState<{
-    purchases: MovementDetail[];
+    purchased_assets: MovementDetail[];
     transfers_in: MovementDetail[];
     transfers_out: MovementDetail[];
-  }>({ purchases: [], transfers_in: [], transfers_out: [] });
+  }>({ purchased_assets: [], transfers_in: [], transfers_out: [] });
   const { user } = useAuth();
 
   // Applied filter states (used for actual API calls)
@@ -130,48 +112,20 @@ const Dashboard: React.FC = () => {
   };
 
   useEffect(() => {
-    const fetchBases = async () => {
-      try {
-        const response = await axios.get(`${process.env.REACT_APP_API_URL}/bases`);
-        setBases(response.data.data);
-      } catch (err) {
-        console.error("Failed to fetch bases");
-      }
-    };
-
-    const fetchAssetTypes = async () => {
-      try {
-        const response = await axios.get(`${process.env.REACT_APP_API_URL}/asset-types`);
-        setAssetTypes(response.data.data);
-      } catch (err) {
-        console.error("Failed to fetch asset types");
-      }
-    };
-
     fetchMetrics();
-    fetchAssetTypes();
-    if(user?.role === 'admin') {
-      fetchBases();
-    }
-  }, [fetchMetrics, user?.role]);
+  }, [fetchMetrics]);
 
-  const handleFilterSubmit = () => {
-    setAppliedBase(selectedBase);
-    setAppliedStartDate(startDate);
-    setAppliedEndDate(endDate);
-    setAppliedAssetType(selectedAssetType);
-  }
-
-  const handleClearFilters = () => {
-    setSelectedBase('');
-    setStartDate(null);
-    setEndDate(null);
-    setSelectedAssetType('');
-    setAppliedBase('');
-    setAppliedStartDate(null);
-    setAppliedEndDate(null);
-    setAppliedAssetType('');
-  }
+  const handleFiltersChange = (filters: {
+    base_id: string;
+    asset_type_id: string;
+    start_date: Date | null;
+    end_date: Date | null;
+  }) => {
+    setAppliedBase(filters.base_id);
+    setAppliedStartDate(filters.start_date);
+    setAppliedEndDate(filters.end_date);
+    setAppliedAssetType(filters.asset_type_id);
+  };
 
   const handleNetMovementClick = async () => {
     await fetchMovementDetails();
@@ -199,10 +153,10 @@ const Dashboard: React.FC = () => {
   }
 
   const chartData = [
-    { name: 'Purchases', value: metrics.purchases, color: '#3b82f6' },
-    { name: 'Transfers In', value: metrics.transfers_in, color: '#10b981' },
-    { name: 'Transfers Out', value: metrics.transfers_out, color: '#f59e0b' },
-    { name: 'Expended', value: metrics.expended, color: '#ef4444' },
+    { name: 'Available', value: metrics.available_assets, color: '#10b981' },
+    { name: 'Assigned', value: metrics.assigned_assets, color: '#3b82f6' },
+    { name: 'Expended', value: metrics.expended_assets, color: '#ef4444' },
+    { name: 'Total', value: metrics.total_assets, color: '#1e40af' },
   ];
 
   const MetricCard: React.FC<{
@@ -257,7 +211,7 @@ const Dashboard: React.FC = () => {
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
-          Dashboard
+          Assets Dashboard
         </Typography>
         <Button
           variant="outlined"
@@ -269,77 +223,12 @@ const Dashboard: React.FC = () => {
       </Box>
 
       {/* Filter Section */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>Filters</Typography>
-          <Grid container spacing={2} alignItems="center">
-            {user?.role === 'admin' && (
-              <Grid item xs={12} sm={3}>
-                <FormControl fullWidth>
-                  <InputLabel id="base-select-label">Base</InputLabel>
-                  <Select
-                    labelId="base-select-label"
-                    value={selectedBase}
-                    label="Base"
-                    onChange={(e) => setSelectedBase(e.target.value)}
-                  >
-                    <MenuItem value="">
-                      <em>All Bases</em>
-                    </MenuItem>
-                    {bases.map((base) => (
-                      <MenuItem key={base.id} value={base.id}>{base.name}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-            )}
-            
-            <Grid item xs={12} sm={user?.role === 'admin' ? 3 : 4}>
-              <FormControl fullWidth>
-                <InputLabel id="asset-type-select-label">Equipment Type</InputLabel>
-                <Select
-                  labelId="asset-type-select-label"
-                  value={selectedAssetType}
-                  label="Equipment Type"
-                  onChange={(e) => setSelectedAssetType(e.target.value)}
-                >
-                  <MenuItem value="">
-                    <em>All Equipment Types</em>
-                  </MenuItem>
-                  {assetTypes.map((assetType) => (
-                    <MenuItem key={assetType.id} value={assetType.id}>{assetType.name}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            
-            <LocalizationProvider dateAdapter={AdapterDateFns}>
-              <Grid item xs={12} sm={user?.role === 'admin' ? 2 : 3}>
-                <DatePicker
-                  label="Start Date"
-                  value={startDate}
-                  onChange={(newValue) => setStartDate(newValue)}
-                />
-              </Grid>
-              <Grid item xs={12} sm={user?.role === 'admin' ? 2 : 3}>
-                <DatePicker
-                  label="End Date"
-                  value={endDate}
-                  onChange={(newValue) => setEndDate(newValue)}
-                />
-              </Grid>
-            </LocalizationProvider>
-            <Grid item xs={12} sm={1}>
-              <Button variant="contained" onClick={handleFilterSubmit} fullWidth>Apply</Button>
-            </Grid>
-            <Grid item xs={12} sm={1}>
-               <Button variant="outlined" onClick={handleClearFilters} fullWidth>Clear</Button>
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+      <FilterBar
+        onFiltersChange={handleFiltersChange}
+        title="Dashboard Filters"
+      />
 
-      {/* Metrics Grid */}
+      {/* Main Metrics Grid */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
@@ -353,7 +242,7 @@ const Dashboard: React.FC = () => {
           <MetricCard
             title="Closing Balance"
             value={metrics.closing_balance}
-            icon={<Inventory sx={{ color: 'white' }} />}
+            icon={<CheckCircle sx={{ color: 'white' }} />}
             color="#1e40af"
             trend={metrics.closing_balance > metrics.opening_balance ? 'up' : 'down'}
           />
@@ -370,24 +259,52 @@ const Dashboard: React.FC = () => {
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
-            title="Assigned Assets"
-            value={metrics.assigned}
-            icon={<Assignment sx={{ color: 'white' }} />}
+            title="Total Assets"
+            value={metrics.total_assets}
+            icon={<Inventory sx={{ color: 'white' }} />}
             color="#dc2626"
           />
         </Grid>
       </Grid>
 
-      {/* Detailed Metrics */}
+      {/* Asset Status Grid */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
-            title="Purchases"
-            value={metrics.purchases}
-            icon={<ShoppingCart sx={{ color: 'white' }} />}
+            title="Available Assets"
+            value={metrics.available_assets}
+            icon={<CheckCircle sx={{ color: 'white' }} />}
+            color="#10b981"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <MetricCard
+            title="Assigned Assets"
+            value={metrics.assigned_assets}
+            icon={<Assignment sx={{ color: 'white' }} />}
             color="#3b82f6"
           />
         </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <MetricCard
+            title="In Maintenance"
+            value={metrics.maintenance_assets}
+            icon={<RemoveCircle sx={{ color: 'white' }} />}
+            color="#f59e0b"
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <MetricCard
+            title="Purchased (Period)"
+            value={metrics.purchased_assets}
+            icon={<ShoppingCart sx={{ color: 'white' }} />}
+            color="#8b5cf6"
+          />
+        </Grid>
+      </Grid>
+
+      {/* Movement Metrics */}
+      <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
             title="Transfers In"
@@ -406,8 +323,8 @@ const Dashboard: React.FC = () => {
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
-            title="Expended"
-            value={metrics.expended}
+            title="Expended (Period)"
+            value={metrics.expended_assets}
             icon={<RemoveCircle sx={{ color: 'white' }} />}
             color="#ef4444"
           />
@@ -415,85 +332,51 @@ const Dashboard: React.FC = () => {
       </Grid>
 
       {/* Chart */}
-      <Paper sx={{ p: 3 }}>
-        <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold', mb: 3 }}>
-          Asset Movement Overview
-        </Typography>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="name" />
-            <YAxis />
-            <Tooltip />
-            <Bar dataKey="value" fill="#3b82f6" />
-          </BarChart>
-        </ResponsiveContainer>
-      </Paper>
-
-      {/* Summary */}
-      <Box sx={{ mt: 4 }}>
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
-            Summary
-          </Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} md={6}>
-              <Box display="flex" alignItems="center" sx={{ mb: 1 }}>
-                <Chip
-                  label={`Net Movement: ${metrics.net_movement > 0 ? '+' : ''}${metrics.net_movement}`}
-                  color={metrics.net_movement > 0 ? 'success' : 'error'}
-                  size="small"
-                  sx={{ mr: 1 }}
-                />
-              </Box>
-              <Typography variant="body2" color="textSecondary">
-                Total assets added: {metrics.purchases + metrics.transfers_in}
-              </Typography>
-              <Typography variant="body2" color="textSecondary">
-                Total assets removed: {metrics.transfers_out + metrics.expended}
-              </Typography>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Typography variant="body2" color="textSecondary">
-                Balance change: {metrics.closing_balance - metrics.opening_balance > 0 ? '+' : ''}
-                {metrics.closing_balance - metrics.opening_balance}
-              </Typography>
-              <Typography variant="body2" color="textSecondary">
-                Currently assigned: {metrics.assigned} assets
-              </Typography>
-            </Grid>
-          </Grid>
-        </Paper>
-      </Box>
+      <Card sx={{ mb: 4 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>Asset Status Distribution</Typography>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" />
+              <YAxis />
+              <Tooltip />
+              <Bar dataKey="value" fill="#8884d8" />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
 
       {/* Movement Details Dialog */}
-      <Dialog 
-        open={showMovementDetails} 
+      <Dialog
+        open={showMovementDetails}
         onClose={() => setShowMovementDetails(false)}
         maxWidth="lg"
         fullWidth
       >
-        <DialogTitle>Net Movement Details</DialogTitle>
+        <DialogTitle>Movement Details</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
-            <Typography variant="h6" gutterBottom>Purchases</Typography>
+            <Typography variant="h6" gutterBottom>Purchased Assets</Typography>
             <TableContainer component={Paper} sx={{ mb: 3 }}>
-              <Table size="small">
+              <Table>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Asset Type</TableCell>
-                    <TableCell>Quantity</TableCell>
-                    <TableCell>Date</TableCell>
+                    <TableCell>Asset Name</TableCell>
+                    <TableCell>Serial Number</TableCell>
+                    <TableCell>Type</TableCell>
                     <TableCell>Base</TableCell>
+                    <TableCell>Date</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {movementDetails.purchases.map((item) => (
+                  {movementDetails.purchased_assets.map((item) => (
                     <TableRow key={item.id}>
+                      <TableCell>{item.name}</TableCell>
+                      <TableCell>{item.serial_number || 'N/A'}</TableCell>
                       <TableCell>{item.asset_type_name}</TableCell>
-                      <TableCell>{item.quantity}</TableCell>
-                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
                       <TableCell>{item.base_name}</TableCell>
+                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -502,24 +385,26 @@ const Dashboard: React.FC = () => {
 
             <Typography variant="h6" gutterBottom>Transfers In</Typography>
             <TableContainer component={Paper} sx={{ mb: 3 }}>
-              <Table size="small">
+              <Table>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Asset Type</TableCell>
-                    <TableCell>Quantity</TableCell>
-                    <TableCell>Date</TableCell>
+                    <TableCell>Asset Name</TableCell>
+                    <TableCell>Serial Number</TableCell>
+                    <TableCell>Type</TableCell>
                     <TableCell>From Base</TableCell>
                     <TableCell>To Base</TableCell>
+                    <TableCell>Date</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {movementDetails.transfers_in.map((item) => (
                     <TableRow key={item.id}>
+                      <TableCell>{item.name}</TableCell>
+                      <TableCell>{item.serial_number || 'N/A'}</TableCell>
                       <TableCell>{item.asset_type_name}</TableCell>
-                      <TableCell>{item.quantity}</TableCell>
-                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
                       <TableCell>{item.from_base_name}</TableCell>
                       <TableCell>{item.to_base_name}</TableCell>
+                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -528,24 +413,26 @@ const Dashboard: React.FC = () => {
 
             <Typography variant="h6" gutterBottom>Transfers Out</Typography>
             <TableContainer component={Paper}>
-              <Table size="small">
+              <Table>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Asset Type</TableCell>
-                    <TableCell>Quantity</TableCell>
-                    <TableCell>Date</TableCell>
+                    <TableCell>Asset Name</TableCell>
+                    <TableCell>Serial Number</TableCell>
+                    <TableCell>Type</TableCell>
                     <TableCell>From Base</TableCell>
                     <TableCell>To Base</TableCell>
+                    <TableCell>Date</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {movementDetails.transfers_out.map((item) => (
                     <TableRow key={item.id}>
+                      <TableCell>{item.name}</TableCell>
+                      <TableCell>{item.serial_number || 'N/A'}</TableCell>
                       <TableCell>{item.asset_type_name}</TableCell>
-                      <TableCell>{item.quantity}</TableCell>
-                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
                       <TableCell>{item.from_base_name}</TableCell>
                       <TableCell>{item.to_base_name}</TableCell>
+                      <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
