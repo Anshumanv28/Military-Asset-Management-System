@@ -217,8 +217,7 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
           base_id = COALESCE($4, base_id),
           email = COALESCE($5, email),
           phone = COALESCE($6, phone),
-          department = COALESCE($7, department),
-          updated_at = CURRENT_TIMESTAMP
+          department = COALESCE($7, department)
       WHERE id = $8
       RETURNING *
     `;
@@ -323,4 +322,4 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
   }
 });
 
-export default router; 
+export default router;

@@ -79,18 +79,18 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
       WHERE status = 'approved' ${baseFilter} ${assetTypeFilter} ${dateFilter('purchase_date')}
     `;
 
-    // Get assets transferred in (completed transfers - quantities)
+    // Get assets transferred in (approved transfers - quantities)
     const transfersInQuery = `
       SELECT COALESCE(SUM(quantity), 0) AS count 
       FROM transfers
-      WHERE status = 'completed' AND to_base_id = $1 ${assetTypeFilter} ${dateFilter('transfer_date')}
+      WHERE status = 'approved' AND to_base_id = $1 ${assetTypeFilter} ${dateFilter('transfer_date')}
     `;
 
-    // Get assets transferred out (completed transfers - quantities)
+    // Get assets transferred out (approved transfers - quantities)
     const transfersOutQuery = `
       SELECT COALESCE(SUM(quantity), 0) AS count 
       FROM transfers
-      WHERE status = 'completed' AND from_base_id = $1 ${assetTypeFilter} ${dateFilter('transfer_date')}
+      WHERE status = 'approved' AND from_base_id = $1 ${assetTypeFilter} ${dateFilter('transfer_date')}
     `;
 
     // Get assets expended in date range (quantities)
@@ -113,8 +113,17 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
     if (targetBaseId) {
       queries.push(query(transfersInQuery, [targetBaseId, ...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
       queries.push(query(transfersOutQuery, [targetBaseId, ...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
+    } else if (role === 'admin') {
+      // For admin viewing all bases, show combined transfers
+      const adminTransfersQuery = `
+        SELECT COALESCE(SUM(quantity), 0) AS count 
+        FROM transfers
+        WHERE status = 'approved' ${assetTypeFilter} ${dateFilter('transfer_date')}
+      `;
+      queries.push(query(adminTransfersQuery, [...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
+      queries.push(query(adminTransfersQuery, [...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
     } else {
-      // For admin viewing all bases, transfers are not applicable
+      // For non-admin users viewing all bases, transfers are not applicable
       queries.push(Promise.resolve({ rows: [{ count: '0' }] }));
       queries.push(Promise.resolve({ rows: [{ count: '0' }] }));
     }
@@ -171,17 +180,17 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
 });
 
 // @route   GET /api/dashboard/movements
-// @desc    Get movement breakdown for asset quantities
+// @desc    Get recent asset movements (purchases and transfers)
 // @access  Private
 router.get('/movements', authenticate, async (req: Request, res: Response) => {
   try {
-    const { start_date, end_date, base_id, asset_type_id } = req.query;
+    const { base_id, start_date, end_date, asset_name } = req.query as { [key: string]: string };
     const { role, base_id: user_base_id } = req.user!;
-    
+
     // Determine target base based on user role
     let targetBaseId: string;
     if (role === 'admin') {
-      targetBaseId = base_id as string || '';
+      targetBaseId = base_id || '';
     } else {
       targetBaseId = user_base_id || '';
     }
@@ -191,35 +200,38 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
     
     if (targetBaseId) {
       queryParams.push(targetBaseId);
-      baseFilter = 'AND base_id = $1';
+      baseFilter = 'AND p.base_id = $1';
     }
     
     if (start_date && end_date) {
       queryParams.push(start_date, end_date);
     }
-    if (asset_type_id) {
-      queryParams.push(asset_type_id);
+    if (asset_name) {
+      queryParams.push(asset_name);
     }
 
     const dateFilter = (dateCol: string) => 
-      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_type_id ? 1 : 0)} AND $${queryParams.length - (asset_type_id ? 1 : 0) + 1}`;
+      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_name ? 1 : 0)} AND $${queryParams.length - (asset_name ? 1 : 0) + 1}`;
     
-    const assetTypeFilter = asset_type_id ? 
-      `AND asset_type_id = $${queryParams.length}` : '';
+    const purchaseAssetNameFilter = asset_name ? 
+      `AND a.name ILIKE $${queryParams.length}` : '';
+    
+    const transferAssetNameFilter = asset_name ? 
+      `AND t.asset_name ILIKE $${queryParams.length}` : '';
 
     // Get purchases breakdown
     const purchasesQuery = `
       SELECT 
         p.id,
-        at.name as name,
-        at.name as asset_type_name,
+        a.name as name,
+        a.name as asset_name,
         p.quantity,
         b.name as base_name,
         p.purchase_date as date
       FROM purchases p
-      JOIN asset_types at ON p.asset_type_id = at.id
+      JOIN assets a ON p.asset_id = a.id
       JOIN bases b ON p.base_id = b.id
-      WHERE p.status = 'approved' ${baseFilter} ${assetTypeFilter} ${dateFilter('p.purchase_date')}
+      WHERE p.status = 'approved' ${baseFilter} ${purchaseAssetNameFilter} ${dateFilter('p.purchase_date')}
       ORDER BY p.purchase_date DESC
       LIMIT 10
     `;
@@ -228,17 +240,16 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
     const transfersQuery = `
       SELECT 
         t.id,
-        at.name as name,
-        at.name as asset_type_name,
+        t.asset_name as name,
+        t.asset_name as asset_name,
         t.quantity,
         fb.name as from_base_name,
         tb.name as to_base_name,
         t.transfer_date as date
       FROM transfers t
-      JOIN asset_types at ON t.asset_type_id = at.id
       JOIN bases fb ON t.from_base_id = fb.id
       JOIN bases tb ON t.to_base_id = tb.id
-      WHERE t.status = 'completed' ${baseFilter ? 'AND (t.from_base_id = $1 OR t.to_base_id = $1)' : ''} ${assetTypeFilter} ${dateFilter('t.transfer_date')}
+      WHERE t.status = 'approved' ${baseFilter ? 'AND (t.from_base_id = $1 OR t.to_base_id = $1)' : ''} ${transferAssetNameFilter} ${dateFilter('t.transfer_date')}
       ORDER BY t.transfer_date DESC
       LIMIT 10
     `;
@@ -283,7 +294,7 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
 });
 
 // @route   GET /api/dashboard/inventory
-// @desc    Get current inventory status by asset type
+// @desc    Get current inventory status by asset name
 // @access  Private
 router.get('/inventory', authenticate, async (req: Request, res: Response) => {
   try {
@@ -308,19 +319,16 @@ router.get('/inventory', authenticate, async (req: Request, res: Response) => {
 
     const inventoryQuery = `
       SELECT 
-        at.name as asset_type_name,
-        at.category,
-        at.unit_of_measure,
+        a.name as asset_name,
         a.quantity,
         a.available_quantity,
         a.assigned_quantity,
         a.status,
         b.name as base_name
       FROM assets a
-      JOIN asset_types at ON a.asset_type_id = at.id
       JOIN bases b ON a.base_id = b.id
       ${baseFilter}
-      ORDER BY at.name, b.name
+      ORDER BY a.name, b.name
     `;
 
     const inventoryRes = await query(inventoryQuery, queryParams);
@@ -344,7 +352,7 @@ router.get('/inventory', authenticate, async (req: Request, res: Response) => {
 // @access  Private
 router.get('/expended-assets', authenticate, async (req: Request, res: Response) => {
   try {
-    const { base_id, start_date, end_date, asset_type_id } = req.query as { [key: string]: string };
+    const { base_id, start_date, end_date, asset_name } = req.query as { [key: string]: string };
     const { role, base_id: user_base_id } = req.user!;
 
     // Determine target base based on user role
@@ -366,27 +374,24 @@ router.get('/expended-assets', authenticate, async (req: Request, res: Response)
     if (start_date && end_date) {
       queryParams.push(start_date, end_date);
     }
-    if (asset_type_id) {
-      queryParams.push(asset_type_id);
+    if (asset_name) {
+      queryParams.push(asset_name);
     }
 
     const dateFilter = (dateCol: string) => 
-      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_type_id ? 1 : 0)} AND $${queryParams.length - (asset_type_id ? 1 : 0) + 1}`;
+      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_name ? 1 : 0)} AND $${queryParams.length - (asset_name ? 1 : 0) + 1}`;
     
-    const assetTypeFilter = asset_type_id ? 
-      `AND e.asset_type_id = $${queryParams.length}` : '';
+    const assetNameFilter = asset_name ? 
+      `AND e.asset_name ILIKE $${queryParams.length}` : '';
 
-    // Get expended assets by asset type
+    // Get expended assets by asset name
     const expendedAssetsQuery = `
       SELECT 
-        at.name as asset_type_name,
-        COALESCE(SUM(e.quantity), 0) as expended_quantity,
-        at.category,
-        at.unit_of_measure
+        e.asset_name,
+        COALESCE(SUM(e.quantity), 0) as expended_quantity
       FROM expenditures e
-      JOIN asset_types at ON e.asset_type_id = at.id
-      WHERE 1=1 ${baseFilter} ${assetTypeFilter} ${dateFilter('e.expenditure_date')}
-      GROUP BY at.id, at.name, at.category, at.unit_of_measure
+      WHERE 1=1 ${baseFilter} ${assetNameFilter} ${dateFilter('e.expenditure_date')}
+      GROUP BY e.asset_name
       ORDER BY expended_quantity DESC
       LIMIT 10
     `;
@@ -395,10 +400,8 @@ router.get('/expended-assets', authenticate, async (req: Request, res: Response)
 
     // Format data for chart
     const chartData = expendedAssetsRes.rows.map((row: any) => ({
-      name: row.asset_type_name,
-      value: parseInt(row.expended_quantity) || 0,
-      category: row.category,
-      unit: row.unit_of_measure
+      name: row.asset_name,
+      value: parseInt(row.expended_quantity) || 0
     }));
 
     res.json({

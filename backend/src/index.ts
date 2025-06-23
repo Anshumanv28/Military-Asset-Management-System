@@ -61,7 +61,6 @@ app.get('/health', (_req, res) => {
 import authRoutes from './routes/auth';
 import dashboardRoutes from './routes/dashboard';
 import assetsRoutes from './routes/assets';
-import assetTypesRoutes from './routes/asset-types';
 import purchasesRoutes from './routes/purchases';
 import transfersRoutes from './routes/transfers';
 import assignmentsRoutes from './routes/assignments';
@@ -74,7 +73,6 @@ import usersRoutes from './routes/users';
 app.use('/api/auth', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/assets', assetsRoutes);
-app.use('/api/asset-types', assetTypesRoutes);
 app.use('/api/purchases', purchasesRoutes);
 app.use('/api/transfers', transfersRoutes);
 app.use('/api/assignments', assignmentsRoutes);

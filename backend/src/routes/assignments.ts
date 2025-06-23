@@ -10,7 +10,7 @@ const router = Router();
 // @access  Private
 router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const { base_id, status, assigned_to, page = 1, limit = 10 } = req.query;
+    const { base_id, asset_name, assigned_to, start_date, end_date, page = 1, limit = 10 } = req.query;
     
     let whereConditions = ['1=1'];
     const params: any[] = [];
@@ -20,20 +20,27 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     if (req.user!.role === 'base_commander' && req.user!.base_id) {
       whereConditions.push(`a.base_id = $${paramIndex++}`);
       params.push(req.user!.base_id);
+    } else if (req.user!.role === 'logistics_officer' && req.user!.base_id) {
+      whereConditions.push(`a.base_id = $${paramIndex++}`);
+      params.push(req.user!.base_id);
     } else if (base_id && req.user!.role !== 'admin') {
       whereConditions.push(`a.base_id = $${paramIndex++}`);
       params.push(base_id);
     }
 
-    if (status) {
-      whereConditions.push(`a.status = $${paramIndex++}`);
-      params.push(status);
+    if (asset_name) {
+      whereConditions.push(`a.asset_name ILIKE $${paramIndex++}`);
+      params.push(`%${asset_name}%`);
     }
 
-    // Add filter for assigned_to, use UUID type
     if (assigned_to) {
       whereConditions.push(`a.assigned_to = $${paramIndex++}`);
       params.push(assigned_to);
+    }
+
+    if (start_date && end_date) {
+      whereConditions.push(`a.assignment_date BETWEEN $${paramIndex++} AND $${paramIndex++}`);
+      params.push(start_date, end_date);
     }
 
     const whereClause = whereConditions.join(' AND ');
@@ -50,11 +57,10 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     // Get paginated results
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
     const assignmentsQuery = `
-      SELECT a.*, at.name as asset_name, 'N/A' as asset_serial_number, at.unit_of_measure, b.name as base_name,
+      SELECT a.*, 'N/A' as asset_serial_number, b.name as base_name,
              CONCAT(p.first_name, ' ', p.last_name) as personnel_name, p.rank as personnel_rank,
              CONCAT(u.first_name, ' ', u.last_name) as assigned_by_name
       FROM assignments a
-      JOIN asset_types at ON a.asset_type_id = at.id
       JOIN bases b ON a.base_id = b.id
       JOIN personnel p ON a.assigned_to = p.id
       JOIN users u ON a.assigned_by = u.id
@@ -88,22 +94,31 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 // @access  Private (Admin, Base Commander, Logistics Officer)
 router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
   try {
-    const { asset_type_id, assigned_to, base_id, quantity = 1, assignment_date, notes } = req.body;
+    const { asset_name, assigned_to, base_id, quantity = 1, assignment_date, notes } = req.body;
+
+    // Debug logging
+    console.log('Received assignment data:', req.body);
+    console.log('Quantity type:', typeof quantity, 'Value:', quantity);
 
     // Validate required fields
-    if (!asset_type_id || !assigned_to || !base_id || !assignment_date) {
+    if (!asset_name || !assigned_to || !base_id || !assignment_date) {
       return res.status(400).json({
         success: false,
-        error: 'Asset type ID, assigned_to, base ID, and assignment date are required'
+        error: 'Asset name, assigned_to, base ID, and assignment date are required'
       });
     }
 
-    // Validate quantity
-    if (quantity <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Quantity must be greater than 0'
-      });
+    // Validate and convert quantity
+    let validQuantity = 1;
+    if (quantity !== undefined && quantity !== null) {
+      const parsedQuantity = parseInt(quantity);
+      if (isNaN(parsedQuantity) || parsedQuantity <= 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Quantity must be a valid positive number'
+        });
+      }
+      validQuantity = parsedQuantity;
     }
 
     // Check access permissions
@@ -114,37 +129,28 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
       });
     }
 
-    // Check if asset type exists
-    const assetTypeResult = await query(
-      'SELECT * FROM asset_types WHERE id = $1',
-      [asset_type_id]
-    );
-
-    if (assetTypeResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Asset type not found'
-      });
-    }
-
     // Check if base has sufficient available quantity
     const assetResult = await query(
-      'SELECT quantity, available_quantity FROM assets WHERE asset_type_id = $1 AND base_id = $2',
-      [asset_type_id, base_id]
+      'SELECT quantity, available_quantity FROM assets WHERE name = $1 AND base_id = $2',
+      [asset_name, base_id]
     );
 
     if (assetResult.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Base does not have this asset type in inventory'
+        error: 'Base does not have this asset in inventory'
       });
     }
 
     const asset = assetResult.rows[0];
-    if (asset.available_quantity < quantity) {
+    console.log('Asset data from database:', asset);
+    console.log('Available quantity:', asset.available_quantity, 'Type:', typeof asset.available_quantity);
+    console.log('Assigned quantity:', asset.assigned_quantity, 'Type:', typeof asset.assigned_quantity);
+
+    if (asset.available_quantity < validQuantity) {
       return res.status(400).json({
         success: false,
-        error: `Insufficient available quantity for assignment. Available: ${asset.available_quantity}, Requested: ${quantity}`
+        error: `Insufficient available quantity for assignment. Available: ${asset.available_quantity}, Requested: ${validQuantity}`
       });
     }
 
@@ -167,31 +173,37 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
     try {
       // Create assignment
       const createQuery = `
-        INSERT INTO assignments (asset_type_id, assigned_to, assigned_by, base_id, quantity, assignment_date, notes)
+        INSERT INTO assignments (asset_name, assigned_to, assigned_by, base_id, quantity, assignment_date, notes)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
       `;
       const result = await query(createQuery, [
-        asset_type_id,
+        asset_name,
         assigned_to,
         req.user!.user_id,
         base_id,
-        quantity,
+        validQuantity,
         assignment_date,
         notes || null
       ]);
 
       const newAssignment = result.rows[0];
 
-      // Update asset quantities
-      const newAvailableQuantity = asset.available_quantity - quantity;
-      const newAssignedQuantity = asset.assigned_quantity + quantity;
+      // Update asset quantities - ensure we use valid numbers
+      const availableQuantity = parseInt(asset.available_quantity) || 0;
+      const assignedQuantity = parseInt(asset.assigned_quantity) || 0;
+      const newAvailableQuantity = availableQuantity - validQuantity;
+      const newAssignedQuantity = assignedQuantity + validQuantity;
+
+      console.log('Calculating new quantities:');
+      console.log('Original available:', availableQuantity, 'Original assigned:', assignedQuantity);
+      console.log('New available:', newAvailableQuantity, 'New assigned:', newAssignedQuantity);
 
       await query(`
         UPDATE assets 
-        SET available_quantity = $1, assigned_quantity = $2, updated_at = CURRENT_TIMESTAMP
-        WHERE asset_type_id = $3 AND base_id = $4
-      `, [newAvailableQuantity, newAssignedQuantity, asset_type_id, base_id]);
+        SET available_quantity = $1, assigned_quantity = $2
+        WHERE name = $3 AND base_id = $4
+      `, [newAvailableQuantity, newAssignedQuantity, asset_name, base_id]);
 
       // Update asset status based on remaining available quantity
       let newStatus = 'available';
@@ -201,9 +213,9 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
 
       await query(`
         UPDATE assets 
-        SET status = $1, updated_at = CURRENT_TIMESTAMP
-        WHERE asset_type_id = $2 AND base_id = $3
-      `, [newStatus, asset_type_id, base_id]);
+        SET status = $1
+        WHERE name = $2 AND base_id = $3
+      `, [newStatus, asset_name, base_id]);
 
       // Commit transaction
       await query('COMMIT');
@@ -213,7 +225,7 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
         action: 'ASSIGNMENT_CREATED',
         user_id: req.user!.user_id,
         assignment_id: newAssignment.id,
-        asset_type_id,
+        asset_name,
         assigned_to,
         quantity
       });
@@ -281,8 +293,8 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
       
       // Get current asset inventory
       const assetResult = await query(
-        'SELECT quantity, available_quantity, assigned_quantity FROM assets WHERE asset_type_id = $1 AND base_id = $2',
-        [assignment.asset_type_id, assignment.base_id]
+        'SELECT quantity, available_quantity, assigned_quantity FROM assets WHERE name = $1 AND base_id = $2',
+        [assignment.asset_name, assignment.base_id]
       );
 
       if (assetResult.rows.length === 0) {
@@ -306,9 +318,9 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
       // Update asset quantities
       await query(`
         UPDATE assets 
-        SET available_quantity = $1, assigned_quantity = $2, updated_at = CURRENT_TIMESTAMP
-        WHERE asset_type_id = $3 AND base_id = $4
-      `, [newAvailableQuantity, newAssignedQuantity, assignment.asset_type_id, assignment.base_id]);
+        SET available_quantity = $1, assigned_quantity = $2
+        WHERE name = $3 AND base_id = $4
+      `, [newAvailableQuantity, newAssignedQuantity, assignment.asset_name, assignment.base_id]);
     }
 
     // Update assignment
@@ -316,8 +328,7 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
       UPDATE assignments 
       SET quantity = COALESCE($1, quantity),
           assignment_date = COALESCE($2, assignment_date),
-          notes = COALESCE($3, notes),
-          updated_at = CURRENT_TIMESTAMP
+          notes = COALESCE($3, notes)
       WHERE id = $4
       RETURNING *
     `;
@@ -389,8 +400,8 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
       // Restore asset quantities if assignment is active
       if (assignment.status === 'active') {
         const assetResult = await query(
-          'SELECT quantity, available_quantity, assigned_quantity FROM assets WHERE asset_type_id = $1 AND base_id = $2',
-          [assignment.asset_type_id, assignment.base_id]
+          'SELECT quantity, available_quantity, assigned_quantity FROM assets WHERE name = $1 AND base_id = $2',
+          [assignment.asset_name, assignment.base_id]
         );
 
         if (assetResult.rows.length > 0) {
@@ -400,9 +411,9 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
 
           await query(`
             UPDATE assets 
-            SET available_quantity = $1, assigned_quantity = $2, updated_at = CURRENT_TIMESTAMP
-            WHERE asset_type_id = $3 AND base_id = $4
-          `, [newAvailableQuantity, newAssignedQuantity, assignment.asset_type_id, assignment.base_id]);
+            SET available_quantity = $1, assigned_quantity = $2
+            WHERE name = $3 AND base_id = $4
+          `, [newAvailableQuantity, newAssignedQuantity, assignment.asset_name, assignment.base_id]);
         }
       }
 
@@ -417,7 +428,7 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
         action: 'ASSIGNMENT_DELETED',
         user_id: req.user!.user_id,
         assignment_id: id,
-        asset_type_id: assignment.asset_type_id,
+        asset_name: assignment.asset_name,
         quantity: assignment.quantity
       });
 
@@ -445,20 +456,23 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
 router.put('/:id/expend', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { quantity, notes } = req.body;
+    const { quantity, notes, reason } = req.body;
     if (!quantity || quantity <= 0) {
       return res.status(400).json({ success: false, error: 'Quantity must be positive' });
     }
+    
     // Get assignment
     const assignmentResult = await query('SELECT * FROM assignments WHERE id = $1', [id]);
     if (assignmentResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Assignment not found' });
     }
     const assignment = assignmentResult.rows[0];
+    
     const remaining = assignment.quantity - assignment.expended_quantity;
     if (quantity > remaining) {
       return res.status(400).json({ success: false, error: 'Cannot expend more than remaining quantity' });
     }
+    
     // Start transaction
     await query('BEGIN');
     try {
@@ -467,21 +481,75 @@ router.put('/:id/expend', authenticate, authorize('admin', 'base_commander', 'lo
       let newStatus = 'active';
       if (newExpended === assignment.quantity) newStatus = 'expended';
       else if (newExpended > 0) newStatus = 'partially_expended';
+      
       const updateAssignment = await query(
-        'UPDATE assignments SET expended_quantity = $1, status = $2, notes = COALESCE($3, notes), updated_at = CURRENT_TIMESTAMP WHERE id = $4 RETURNING *',
+        'UPDATE assignments SET expended_quantity = $1, status = $2, notes = COALESCE($3, notes) WHERE id = $4 RETURNING *',
         [newExpended, newStatus, notes, id]
       );
-      // Update asset assigned_quantity
-      await query(
-        'UPDATE assets SET assigned_quantity = assigned_quantity - $1, updated_at = CURRENT_TIMESTAMP WHERE asset_type_id = $2 AND base_id = $3',
-        [quantity, assignment.asset_type_id, assignment.base_id]
+      
+      // Update asset quantities - remove from total inventory (consistent with expenditures page)
+      const assetResult = await query(
+        'SELECT quantity, available_quantity, assigned_quantity FROM assets WHERE name = $1 AND base_id = $2',
+        [assignment.asset_name, assignment.base_id]
       );
+
+      if (assetResult.rows.length === 0) {
+        await query('ROLLBACK');
+        return res.status(400).json({ success: false, error: 'Asset record not found for this base and asset name' });
+      }
+
+      const asset = assetResult.rows[0];
+      const newQuantity = asset.quantity - quantity;
+      const newAvailableQuantity = asset.available_quantity - quantity;
+      const newAssignedQuantity = asset.assigned_quantity - quantity;
+
+      if (newQuantity < 0 || newAvailableQuantity < 0 || newAssignedQuantity < 0) {
+        await query('ROLLBACK');
+        return res.status(400).json({ success: false, error: 'Asset quantities cannot be negative' });
+      }
+
+      // Update asset quantities
+      await query(
+        'UPDATE assets SET quantity = $1, available_quantity = $2, assigned_quantity = $3 WHERE name = $4 AND base_id = $5',
+        [newQuantity, newAvailableQuantity, newAssignedQuantity, assignment.asset_name, assignment.base_id]
+      );
+
+      // Update asset status based on remaining quantity
+      let assetNewStatus = 'available';
+      if (newQuantity === 0) {
+        assetNewStatus = 'out_of_stock';
+      } else if (newAvailableQuantity === 0) {
+        assetNewStatus = 'low_stock';
+      }
+
+      await query(
+        'UPDATE assets SET status = $1 WHERE name = $2 AND base_id = $3',
+        [assetNewStatus, assignment.asset_name, assignment.base_id]
+      );
+
+      // Use the provided reason or fallback to default
+      const expenditureReason = reason || 'Expended from assignment';
+
       // Create expenditure record
       await query(
-        'INSERT INTO expenditures (asset_type_id, base_id, personnel_id, quantity, expenditure_date, reason, notes, created_by) VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6, $7)',
-        [assignment.asset_type_id, assignment.base_id, assignment.assigned_to, quantity, 'Expended from assignment', notes, req.user!.user_id]
+        'INSERT INTO expenditures (asset_name, base_id, personnel_id, quantity, expenditure_date, reason, notes, created_by) VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6, $7)',
+        [assignment.asset_name, assignment.base_id, assignment.assigned_to, quantity, expenditureReason, notes, req.user!.user_id]
       );
+      
       await query('COMMIT');
+      
+      // Log expenditure from assignment
+      logger.info({
+        action: 'ASSIGNMENT_EXPENDED',
+        user_id: req.user!.user_id,
+        assignment_id: id,
+        asset_name: assignment.asset_name,
+        base_id: assignment.base_id,
+        personnel_id: assignment.assigned_to,
+        quantity,
+        reason: expenditureReason
+      });
+      
       return res.json({ success: true, data: updateAssignment.rows[0] });
     } catch (err) {
       await query('ROLLBACK');

@@ -23,63 +23,43 @@ import {
   CircularProgress
 } from '@mui/material';
 import {
-  Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
   FilterList as FilterIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
+import { useData } from '../contexts/DataContext.tsx';
 import FilterBar from '../components/FilterBar.tsx';
+
+declare const process: {
+  env: {
+    REACT_APP_API_URL: string;
+  };
+};
 
 interface Asset {
   id: string;
-  asset_type_id: string;
-  asset_type_name: string;
-  serial_number: string;
   name: string;
-  description: string;
-  current_base_id: string;
+  base_id: string;
   current_base_name: string;
   status: string;
-  purchase_date: string;
-  purchase_cost?: number | null;
-  current_value?: number | null;
   quantity: number;
   available_quantity: number;
   created_at: string;
   updated_at: string;
 }
 
-interface AssetType {
-  id: string;
-  name: string;
-  description: string;
-}
-
-interface Base {
-  id: string;
-  name: string;
-  code: string;
-  location: string;
-}
-
 interface CreateAssetForm {
-  asset_type_id: string;
-  serial_number: string;
   name: string;
-  description: string;
-  current_base_id: string;
-  purchase_date: string;
-  purchase_cost: number;
+  base_id: string;
   quantity: number;
 }
 
 const Assets: React.FC = () => {
   const { user } = useAuth();
+  const { bases } = useData();
   const [allAssets, setAllAssets] = useState<Asset[]>([]);
-  const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
-  const [bases, setBases] = useState<Base[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [openDialog, setOpenDialog] = useState(false);
@@ -88,35 +68,17 @@ const Assets: React.FC = () => {
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
   const [formData, setFormData] = useState<CreateAssetForm>({
-    asset_type_id: '',
-    serial_number: '',
     name: '',
-    description: '',
-    current_base_id: '',
-    purchase_date: '',
-    purchase_cost: 0,
+    base_id: '',
     quantity: 1,
   });
 
   // Client-side filters
   const [filters, setFilters] = useState({
-    asset_type_id: '',
-    current_base_id: '',
+    name: '',
+    base_id: '',
     status: '',
-    serial_number: '',
   });
-
-  // Debounced search for serial number
-  const [debouncedSerialNumber, setDebouncedSerialNumber] = useState('');
-
-  // Debounce serial number search
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSerialNumber(filters.serial_number);
-    }, 300); // 300ms delay
-
-    return () => clearTimeout(timer);
-  }, [filters.serial_number]);
 
   // Fetch all assets once
   const fetchAllAssets = async () => {
@@ -131,40 +93,19 @@ const Assets: React.FC = () => {
     }
   };
 
-  const fetchAssetTypes = async () => {
-    try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/asset-types?limit=1000`);
-      setAssetTypes(response.data.data);
-    } catch (err: any) {
-      console.error('Failed to fetch asset types:', err);
-    }
-  };
-
-  const fetchBases = async () => {
-    try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/bases`);
-      setBases(response.data.data);
-    } catch (err: any) {
-      console.error('Failed to fetch bases:', err);
-    }
-  };
-
   useEffect(() => {
     fetchAllAssets();
-    fetchAssetTypes();
-    fetchBases();
   }, []);
 
   // Client-side filtering
   const filteredAssets = useMemo(() => {
     return allAssets.filter(asset => {
-      if (filters.asset_type_id && asset.asset_type_id !== filters.asset_type_id) return false;
-      if (filters.current_base_id && asset.current_base_id !== filters.current_base_id) return false;
+      if (filters.name && !asset.name.toLowerCase().includes(filters.name.toLowerCase())) return false;
+      if (filters.base_id && asset.base_id !== filters.base_id) return false;
       if (filters.status && asset.status !== filters.status) return false;
-      if (debouncedSerialNumber && !asset.serial_number.toLowerCase().includes(debouncedSerialNumber.toLowerCase())) return false;
       return true;
     });
-  }, [allAssets, filters.asset_type_id, filters.current_base_id, filters.status, debouncedSerialNumber]);
+  }, [allAssets, filters.name, filters.base_id, filters.status]);
 
   // Pagination
   const paginatedAssets = useMemo(() => {
@@ -176,25 +117,15 @@ const Assets: React.FC = () => {
     if (asset) {
       setEditingAsset(asset);
       setFormData({
-        asset_type_id: asset.asset_type_id,
-        serial_number: asset.serial_number,
         name: asset.name,
-        description: asset.description,
-        current_base_id: asset.current_base_id,
-        purchase_date: asset.purchase_date,
-        purchase_cost: asset.purchase_cost || 0,
+        base_id: asset.base_id,
         quantity: asset.quantity,
       });
     } else {
       setEditingAsset(null);
       setFormData({
-        asset_type_id: '',
-        serial_number: '',
         name: '',
-        description: '',
-        current_base_id: '',
-        purchase_date: '',
-        purchase_cost: 0,
+        base_id: '',
         quantity: 1,
       });
     }
@@ -248,15 +179,11 @@ const Assets: React.FC = () => {
 
   const handleFiltersChange = (filters: {
     base_id: string;
-    asset_type_id: string;
-    start_date: Date | null;
-    end_date: Date | null;
   }) => {
     setFilters({
-      asset_type_id: filters.asset_type_id || '',
-      current_base_id: filters.base_id || '',
+      base_id: filters.base_id || '',
+      name: '',
       status: '',
-      serial_number: ''
     });
     setPage(0); // Reset to first page when filters change
   };
@@ -290,7 +217,6 @@ const Assets: React.FC = () => {
           </Typography>
           <FilterBar
             onFiltersChange={handleFiltersChange}
-            showDateFilters={false}
             title="Asset Filters"
           />
           <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
@@ -303,14 +229,14 @@ const Assets: React.FC = () => {
 
       {/* Actions */}
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        {user?.role !== 'logistics_officer' && (
+        {user?.role === 'admin' && (
           <Button
             variant="contained"
-            startIcon={<AddIcon />}
+            color="primary"
             onClick={() => handleOpenDialog()}
-            disabled={user?.role !== 'admin'}
+            startIcon={<EditIcon />}
           >
-            New Asset
+            Create Asset
           </Button>
         )}
       </Box>
@@ -321,21 +247,17 @@ const Assets: React.FC = () => {
           <TableHead>
             <TableRow>
               <TableCell>Name</TableCell>
-              <TableCell>Type</TableCell>
               <TableCell>Base</TableCell>
               <TableCell>Status</TableCell>
               <TableCell>Quantity</TableCell>
               <TableCell>Available</TableCell>
-              <TableCell>Purchase Cost</TableCell>
-              <TableCell>Current Value</TableCell>
-              <TableCell>Actions</TableCell>
+              {user?.role === 'admin' && <TableCell>Actions</TableCell>}
             </TableRow>
           </TableHead>
           <TableBody>
             {paginatedAssets.map((asset) => (
               <TableRow key={asset.id}>
                 <TableCell>{asset.name}</TableCell>
-                <TableCell>{asset.asset_type_name}</TableCell>
                 <TableCell>{asset.current_base_name}</TableCell>
                 <TableCell>
                   <Chip
@@ -346,34 +268,22 @@ const Assets: React.FC = () => {
                 </TableCell>
                 <TableCell>{asset.quantity}</TableCell>
                 <TableCell>{asset.available_quantity}</TableCell>
-                <TableCell>
-                  {asset.purchase_cost !== null && asset.purchase_cost !== undefined 
-                    ? `$${Number(asset.purchase_cost).toLocaleString()}`
-                    : 'N/A'}
-                </TableCell>
-                <TableCell>
-                  {asset.current_value !== null && asset.current_value !== undefined 
-                    ? `$${Number(asset.current_value).toLocaleString()}`
-                    : 'N/A'}
-                </TableCell>
-                <TableCell>
-                  {user?.role !== 'logistics_officer' && (
-                    <>
-                      <IconButton
-                        color="primary"
-                        onClick={() => handleOpenDialog(asset)}
-                      >
-                        <EditIcon />
-                      </IconButton>
-                      <IconButton
-                        color="error"
-                        onClick={() => handleDelete(asset.id)}
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    </>
-                  )}
-                </TableCell>
+                {user?.role === 'admin' && (
+                  <TableCell>
+                    <IconButton
+                      color="primary"
+                      onClick={() => handleOpenDialog(asset)}
+                    >
+                      <EditIcon />
+                    </IconButton>
+                    <IconButton
+                      color="error"
+                      onClick={() => handleDelete(asset.id)}
+                    >
+                      <DeleteIcon />
+                    </IconButton>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
@@ -395,14 +305,83 @@ const Assets: React.FC = () => {
       />
 
       {/* Dialog */}
-      <Dialog open={openDialog} onClose={handleCloseDialog}>
+      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
         <DialogTitle>{editingAsset ? 'Edit Asset' : 'New Asset'}</DialogTitle>
         <DialogContent>
-          {/* Form content */}
+          <Box sx={{ pt: 1 }}>
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                Asset Name *
+              </Typography>
+              <input
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  fontSize: '14px'
+                }}
+                placeholder="Enter asset name"
+              />
+            </Box>
+            
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                Base *
+              </Typography>
+              <select
+                value={formData.base_id}
+                onChange={(e) => setFormData({ ...formData, base_id: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  fontSize: '14px'
+                }}
+              >
+                <option value="">Select a base</option>
+                {bases.map((base) => (
+                  <option key={base.id} value={base.id}>
+                    {base.name} ({base.code})
+                  </option>
+                ))}
+              </select>
+            </Box>
+            
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                Quantity *
+              </Typography>
+              <input
+                type="number"
+                min="1"
+                value={formData.quantity}
+                onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) || 1 })}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  fontSize: '14px'
+                }}
+                placeholder="Enter quantity"
+              />
+            </Box>
+          </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button onClick={handleSubmit}>Save</Button>
+          <Button 
+            onClick={handleSubmit}
+            variant="contained"
+            disabled={!formData.name || !formData.base_id || formData.quantity < 1}
+          >
+            Save
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

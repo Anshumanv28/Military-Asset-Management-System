@@ -9,9 +9,7 @@
     "build": "tsc",
     "test": "jest",
     "test:watch": "jest --watch",
-    "migrate": "ts-node src/database/migrate.ts",
     "seed": "ts-node src/database/seed.ts",
-    "add-personnel-constraint": "ts-node src/database/add-personnel-unique-constraint.ts",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix"
   },

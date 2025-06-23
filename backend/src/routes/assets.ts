@@ -10,7 +10,7 @@ const router = Router();
 // @access  Private
 router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const { base_id, asset_type_id, status, page = 1, limit = 10 } = req.query;
+    const { base_id, name, status, page = 1, limit = 10 } = req.query;
     
     let whereConditions = ['1=1'];
     const params: any[] = [];
@@ -25,9 +25,9 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
       params.push(base_id);
     }
 
-    if (asset_type_id) {
-      whereConditions.push(`a.asset_type_id = $${paramIndex++}`);
-      params.push(asset_type_id);
+    if (name) {
+      whereConditions.push(`a.name ILIKE $${paramIndex++}`);
+      params.push(`%${name}%`);
     }
 
     if (status) {
@@ -51,17 +51,12 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     const assetsQuery = `
       SELECT 
         a.*,
-        at.name as name,
-        'N/A' as serial_number,
-        at.category,
-        at.unit_of_measure,
         b.name as current_base_name,
         b.code as base_code
       FROM assets a
-      JOIN asset_types at ON a.asset_type_id = at.id
       JOIN bases b ON a.base_id = b.id
       WHERE ${whereClause}
-      ORDER BY at.name, b.name
+      ORDER BY a.name, b.name
       LIMIT $${paramIndex++} OFFSET $${paramIndex++}
     `;
     const assetsResult = await query(assetsQuery, [...params, parseInt(limit as string), offset]);
@@ -95,14 +90,9 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
     const assetQuery = `
       SELECT 
         a.*,
-        at.name as name,
-        'N/A' as serial_number,
-        at.category,
-        at.unit_of_measure,
         b.name as current_base_name,
         b.code as base_code
       FROM assets a
-      JOIN asset_types at ON a.asset_type_id = at.id
       JOIN bases b ON a.base_id = b.id
       WHERE a.id = $1
     `;
@@ -137,16 +127,16 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
 
 // @route   POST /api/assets
 // @desc    Create new asset inventory entry
-// @access  Private (Admin, Base Commander)
-router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+// @access  Private (Admin only)
+router.post('/', authenticate, authorize('admin'), async (req: Request, res: Response) => {
   try {
-    const { asset_type_id, base_id, quantity, available_quantity, assigned_quantity } = req.body;
+    const { name, base_id, quantity, available_quantity, assigned_quantity } = req.body;
 
     // Validate required fields
-    if (!asset_type_id || !base_id || quantity === undefined) {
+    if (!name || !base_id || quantity === undefined) {
       return res.status(400).json({
         success: false,
-        error: 'Asset type ID, base ID, and quantity are required'
+        error: 'Asset name, base ID, and quantity are required'
       });
     }
 
@@ -158,26 +148,10 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       });
     }
 
-    // Base commanders can only create assets for their base
-    const targetBaseId = req.user!.role === 'base_commander' ? req.user!.base_id : base_id;
-
-    // Check if asset type exists
-    const assetTypeCheck = await query(
-      'SELECT id FROM asset_types WHERE id = $1',
-      [asset_type_id]
-    );
-
-    if (assetTypeCheck.rows.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Asset type not found'
-      });
-    }
-
     // Check if base exists
     const baseCheck = await query(
       'SELECT id FROM bases WHERE id = $1',
-      [targetBaseId]
+      [base_id]
     );
 
     if (baseCheck.rows.length === 0) {
@@ -187,16 +161,16 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       });
     }
 
-    // Check if asset already exists for this type and base
+    // Check if asset already exists for this name and base
     const existingAsset = await query(
-      'SELECT id FROM assets WHERE asset_type_id = $1 AND base_id = $2',
-      [asset_type_id, targetBaseId]
+      'SELECT id FROM assets WHERE name = $1 AND base_id = $2',
+      [name, base_id]
     );
 
     if (existingAsset.rows.length > 0) {
       return res.status(400).json({
         success: false,
-        error: 'Asset inventory already exists for this type and base'
+        error: 'Asset inventory already exists for this name and base'
       });
     }
 
@@ -213,13 +187,13 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
     }
 
     const createQuery = `
-      INSERT INTO assets (asset_type_id, base_id, quantity, available_quantity, assigned_quantity)
+      INSERT INTO assets (name, base_id, quantity, available_quantity, assigned_quantity)
       VALUES ($1, $2, $3, $4, $5)
       RETURNING *
     `;
     const result = await query(createQuery, [
-      asset_type_id,
-      targetBaseId,
+      name,
+      base_id,
       quantity,
       finalAvailableQuantity,
       finalAssignedQuantity
@@ -232,8 +206,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       action: 'ASSET_INVENTORY_CREATED',
       user_id: req.user!.user_id,
       asset_id: newAsset.id,
-      asset_type_id,
-      base_id: targetBaseId,
+      asset_name: name,
+      base_id: base_id,
       quantity
     });
 
@@ -249,8 +223,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
 
 // @route   PUT /api/assets/:id
 // @desc    Update asset inventory
-// @access  Private (Admin, Base Commander)
-router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+// @access  Private (Admin only)
+router.put('/:id', authenticate, authorize('admin'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { quantity, available_quantity, assigned_quantity, status } = req.body;
@@ -269,14 +243,6 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
     }
 
     const asset = currentAsset.rows[0];
-
-    // Check access permissions
-    if (req.user!.role === 'base_commander' && asset.base_id !== req.user!.base_id) {
-      return res.status(403).json({
-        success: false,
-        error: 'Access denied to this asset'
-      });
-    }
 
     // Validate quantities
     if (quantity !== undefined && quantity < 0) {
@@ -300,7 +266,7 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
     // Update asset
     const updateQuery = `
       UPDATE assets 
-      SET quantity = $1, available_quantity = $2, assigned_quantity = $3, status = $4, updated_at = CURRENT_TIMESTAMP
+      SET quantity = $1, available_quantity = $2, assigned_quantity = $3, status = $4
       WHERE id = $5
       RETURNING *
     `;

@@ -213,8 +213,7 @@ router.put('/:id', authenticate, authorize('admin'), async (req: Request, res: R
           code = COALESCE($2, code),
           location = COALESCE($3, location),
           commander_id = $4,
-          is_active = COALESCE($5, is_active),
-          updated_at = CURRENT_TIMESTAMP
+          is_active = COALESCE($5, is_active)
       WHERE id = $6
       RETURNING *
     `;
@@ -274,7 +273,7 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
     // Soft delete by setting is_active to false
     const deleteQuery = `
       UPDATE bases 
-      SET is_active = false, updated_at = CURRENT_TIMESTAMP
+      SET is_active = false
       WHERE id = $1
       RETURNING *
     `;

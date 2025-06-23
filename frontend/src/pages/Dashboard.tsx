@@ -53,7 +53,7 @@ interface MovementDetail {
   id: string;
   name: string;
   serial_number?: string;
-  asset_type_name: string;
+  asset_name: string;
   base_name?: string;
   from_base_name?: string;
   to_base_name?: string;
@@ -164,9 +164,8 @@ const Dashboard: React.FC = () => {
     value: number;
     icon: React.ReactNode;
     color: string;
-    trend?: 'up' | 'down' | 'neutral';
     onClick?: () => void;
-  }> = ({ title, value, icon, color, trend, onClick }) => (
+  }> = ({ title, value, icon, color, onClick }) => (
     <Card sx={{ height: '100%', cursor: onClick ? 'pointer' : 'default' }} onClick={onClick}>
       <CardContent>
         <Box display="flex" alignItems="center" justifyContent="space-between">
@@ -191,60 +190,43 @@ const Dashboard: React.FC = () => {
             {icon}
           </Box>
         </Box>
-        {trend && (
-          <Box display="flex" alignItems="center" sx={{ mt: 1 }}>
-            {trend === 'up' ? (
-              <TrendingUp sx={{ color: 'success.main', fontSize: 16, mr: 0.5 }} />
-            ) : trend === 'down' ? (
-              <TrendingDown sx={{ color: 'error.main', fontSize: 16, mr: 0.5 }} />
-            ) : null}
-            <Typography variant="caption" color="textSecondary">
-              {trend === 'up' ? 'Increasing' : trend === 'down' ? 'Decreasing' : 'Stable'}
-            </Typography>
-          </Box>
-        )}
       </CardContent>
     </Card>
   );
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" sx={{ fontWeight: 'bold' }}>
-          Assets Dashboard
-        </Typography>
-        <Button
-          variant="outlined"
-          onClick={fetchMetrics}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
-      </Box>
-
-      {/* Filter Section */}
-      <FilterBar
+    <Box sx={{ p: 3 }}>
+      <Typography variant="h4" gutterBottom>
+        Dashboard
+      </Typography>
+      
+      {/* Filter Bar */}
+      <FilterBar 
         onFiltersChange={handleFiltersChange}
-        title="Dashboard Filters"
+        initialFilterValues={{
+          base_id: appliedBase,
+          asset_type_id: appliedAssetType,
+          start_date: appliedStartDate,
+          end_date: appliedEndDate,
+        }}
       />
 
-      {/* Main Metrics Grid */}
+      {/* Metrics Grid */}
       <Grid container spacing={3} sx={{ mb: 4 }}>
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
             title="Opening Balance"
             value={metrics.opening_balance}
-            icon={<Inventory sx={{ color: 'white' }} />}
-            color="#1e3a8a"
+            icon={<TrendingUp sx={{ color: 'white' }} />}
+            color="#10b981"
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
             title="Closing Balance"
             value={metrics.closing_balance}
-            icon={<CheckCircle sx={{ color: 'white' }} />}
-            color="#1e40af"
-            trend={metrics.closing_balance > metrics.opening_balance ? 'up' : 'down'}
+            icon={<TrendingDown sx={{ color: 'white' }} />}
+            color="#f59e0b"
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -253,7 +235,6 @@ const Dashboard: React.FC = () => {
             value={metrics.net_movement}
             icon={<SwapHoriz sx={{ color: 'white' }} />}
             color="#3b82f6"
-            trend={metrics.net_movement > 0 ? 'up' : 'down'}
             onClick={handleNetMovementClick}
           />
         </Grid>
@@ -287,38 +268,10 @@ const Dashboard: React.FC = () => {
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <MetricCard
-            title="In Maintenance"
-            value={metrics.maintenance_assets}
-            icon={<RemoveCircle sx={{ color: 'white' }} />}
-            color="#f59e0b"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <MetricCard
             title="Purchased (Period)"
             value={metrics.purchased_assets}
             icon={<ShoppingCart sx={{ color: 'white' }} />}
             color="#8b5cf6"
-          />
-        </Grid>
-      </Grid>
-
-      {/* Movement Metrics */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={6} md={3}>
-          <MetricCard
-            title="Transfers In"
-            value={metrics.transfers_in}
-            icon={<TrendingUp sx={{ color: 'white' }} />}
-            color="#10b981"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <MetricCard
-            title="Transfers Out"
-            value={metrics.transfers_out}
-            icon={<TrendingDown sx={{ color: 'white' }} />}
-            color="#f59e0b"
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -329,6 +282,73 @@ const Dashboard: React.FC = () => {
             color="#ef4444"
           />
         </Grid>
+      </Grid>
+
+      {/* Movement Metrics */}
+      <Grid container spacing={3} sx={{ mb: 4 }}>
+        {user?.role === 'admin' ? (
+          <>
+            <Grid item xs={12} sm={6} md={3}>
+              <MetricCard
+                title="Total Transfers"
+                value={metrics.transfers_in + metrics.transfers_out}
+                icon={<SwapHoriz sx={{ color: 'white' }} />}
+                color="#6366f1"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <MetricCard
+                title="Transfers In"
+                value={metrics.transfers_in}
+                icon={<TrendingUp sx={{ color: 'white' }} />}
+                color="#10b981"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <MetricCard
+                title="Transfers Out"
+                value={metrics.transfers_out}
+                icon={<TrendingDown sx={{ color: 'white' }} />}
+                color="#f59e0b"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <MetricCard
+                title="Net Transfers"
+                value={metrics.transfers_in - metrics.transfers_out}
+                icon={<SwapHoriz sx={{ color: 'white' }} />}
+                color="#8b5cf6"
+              />
+            </Grid>
+          </>
+        ) : (
+          <>
+            <Grid item xs={12} sm={6} md={4}>
+              <MetricCard
+                title="Transfers In"
+                value={metrics.transfers_in}
+                icon={<TrendingUp sx={{ color: 'white' }} />}
+                color="#10b981"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={4}>
+              <MetricCard
+                title="Transfers Out"
+                value={metrics.transfers_out}
+                icon={<TrendingDown sx={{ color: 'white' }} />}
+                color="#f59e0b"
+              />
+            </Grid>
+            <Grid item xs={12} sm={6} md={4}>
+              <MetricCard
+                title="Net Transfers"
+                value={metrics.transfers_in - metrics.transfers_out}
+                icon={<SwapHoriz sx={{ color: 'white' }} />}
+                color="#8b5cf6"
+              />
+            </Grid>
+          </>
+        )}
       </Grid>
 
       {/* Chart */}
@@ -374,7 +394,7 @@ const Dashboard: React.FC = () => {
                     <TableRow key={item.id}>
                       <TableCell>{item.name}</TableCell>
                       <TableCell>{item.serial_number || 'N/A'}</TableCell>
-                      <TableCell>{item.asset_type_name}</TableCell>
+                      <TableCell>{item.asset_name}</TableCell>
                       <TableCell>{item.base_name}</TableCell>
                       <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
                     </TableRow>
@@ -401,7 +421,7 @@ const Dashboard: React.FC = () => {
                     <TableRow key={item.id}>
                       <TableCell>{item.name}</TableCell>
                       <TableCell>{item.serial_number || 'N/A'}</TableCell>
-                      <TableCell>{item.asset_type_name}</TableCell>
+                      <TableCell>{item.asset_name}</TableCell>
                       <TableCell>{item.from_base_name}</TableCell>
                       <TableCell>{item.to_base_name}</TableCell>
                       <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
@@ -429,7 +449,7 @@ const Dashboard: React.FC = () => {
                     <TableRow key={item.id}>
                       <TableCell>{item.name}</TableCell>
                       <TableCell>{item.serial_number || 'N/A'}</TableCell>
-                      <TableCell>{item.asset_type_name}</TableCell>
+                      <TableCell>{item.asset_name}</TableCell>
                       <TableCell>{item.from_base_name}</TableCell>
                       <TableCell>{item.to_base_name}</TableCell>
                       <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>

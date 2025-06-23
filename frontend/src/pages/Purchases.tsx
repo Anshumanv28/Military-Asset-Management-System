@@ -44,20 +44,17 @@ import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
 import FilterBar from '../components/FilterBar.tsx';
+import { useData } from '../contexts/DataContext.tsx';
 
 interface Purchase {
   id: string;
-  asset_type_id: string;
-  asset_type_name: string;
+  asset_id: string;
+  asset_name?: string;
   base_id: string;
   base_name: string;
   quantity: number;
-  unit_cost: number;
-  total_cost: number;
   supplier: string;
   purchase_date: string;
-  delivery_date?: string;
-  purchase_order_number?: string;
   status: 'pending' | 'approved' | 'cancelled';
   approved_by?: string;
   approved_at?: string;
@@ -66,33 +63,22 @@ interface Purchase {
   created_at: string;
 }
 
-interface AssetType {
-  id: string;
-  name: string;
-  category: string;
-  unit_of_measure: string;
-}
-
 interface Base {
   id: string;
   name: string;
 }
 
 interface CreatePurchaseForm {
-  asset_type_id: string;
+  asset_id: string;
   base_id: string;
   quantity: number;
-  unit_cost: number;
   supplier: string;
   purchase_date: string;
-  delivery_date?: string;
-  purchase_order_number?: string;
   notes?: string;
 }
 
 const Purchases: React.FC = () => {
   const [allPurchases, setAllPurchases] = useState<Purchase[]>([]);
-  const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [bases, setBases] = useState<Base[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -101,22 +87,20 @@ const Purchases: React.FC = () => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
 
+  const { assets = [] } = useData();
+
   const [formData, setFormData] = useState<CreatePurchaseForm>({
-    asset_type_id: '',
+    asset_id: '',
     base_id: '',
     quantity: 0,
-    unit_cost: 0,
     supplier: '',
     purchase_date: new Date().toISOString().split('T')[0],
-    delivery_date: '',
-    purchase_order_number: '',
     notes: '',
   });
 
   // Client-side filters
   const [filters, setFilters] = useState({
     base_id: '',
-    asset_type_id: '',
     start_date: '',
     end_date: '',
     status: '',
@@ -137,15 +121,6 @@ const Purchases: React.FC = () => {
     }
   };
 
-  const fetchAssetTypes = async () => {
-    try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/asset-types`);
-      setAssetTypes(response.data.data);
-    } catch (err) {
-      console.error('Failed to fetch asset types');
-    }
-  };
-
   const fetchBases = async () => {
     try {
       const response = await axios.get(`${process.env.REACT_APP_API_URL}/bases`);
@@ -157,7 +132,6 @@ const Purchases: React.FC = () => {
 
   useEffect(() => {
     fetchAllPurchases();
-    fetchAssetTypes();
     fetchBases();
   }, []);
 
@@ -165,7 +139,6 @@ const Purchases: React.FC = () => {
   const filteredPurchases = useMemo(() => {
     return allPurchases.filter(purchase => {
       if (filters.base_id && purchase.base_id !== filters.base_id) return false;
-      if (filters.asset_type_id && purchase.asset_type_id !== filters.asset_type_id) return false;
       if (filters.start_date && purchase.purchase_date < filters.start_date) return false;
       if (filters.end_date && purchase.purchase_date > filters.end_date) return false;
       if (filters.status && purchase.status !== filters.status) return false;
@@ -183,27 +156,21 @@ const Purchases: React.FC = () => {
     if (purchase) {
       setEditingPurchase(purchase);
       setFormData({
-        asset_type_id: purchase.asset_type_id,
+        asset_id: purchase.asset_id,
         base_id: purchase.base_id,
         quantity: purchase.quantity,
-        unit_cost: purchase.unit_cost,
         supplier: purchase.supplier,
         purchase_date: purchase.purchase_date,
-        delivery_date: purchase.delivery_date || '',
-        purchase_order_number: purchase.purchase_order_number || '',
         notes: purchase.notes || '',
       });
     } else {
       setEditingPurchase(null);
       setFormData({
-        asset_type_id: '',
+        asset_id: '',
         base_id: '',
         quantity: 0,
-        unit_cost: 0,
         supplier: '',
         purchase_date: new Date().toISOString().split('T')[0],
-        delivery_date: '',
-        purchase_order_number: '',
         notes: '',
       });
     }
@@ -261,7 +228,6 @@ const Purchases: React.FC = () => {
   const handleClearFilters = () => {
     setFilters({
       base_id: '',
-      asset_type_id: '',
       start_date: '',
       end_date: '',
       status: '',
@@ -273,25 +239,41 @@ const Purchases: React.FC = () => {
     return new Date(dateString).toLocaleDateString();
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-    }).format(amount);
+  // RBAC functions similar to transfers
+  const canApprove = (purchase: Purchase) => {
+    return purchase.status === 'pending';
+  };
+
+  const canDelete = (purchase: Purchase) => {
+    if (user?.role === 'admin') {
+      return true; // Admin can delete any purchase
+    }
+    if (user?.role === 'base_commander') {
+      // Base commanders can delete pending and cancelled purchases for their base, but not approved ones
+      return (purchase.status === 'pending' || purchase.status === 'cancelled') && 
+             purchase.base_id === user?.base_id;
+    }
+    return false;
+  };
+
+  const canEdit = (purchase: Purchase) => {
+    if (user?.role === 'admin') {
+      return true; // Admin can edit any purchase
+    }
+    if (user?.role === 'base_commander') {
+      // Base commanders can only edit pending purchases for their base
+      return purchase.status === 'pending' && purchase.base_id === user?.base_id;
+    }
+    return false;
   };
 
   const handleFiltersChange = (filters: {
     base_id: string;
-    asset_type_id: string;
-    start_date: Date | null;
-    end_date: Date | null;
   }) => {
     setFilters({
-      ...filters,
       base_id: filters.base_id,
-      asset_type_id: filters.asset_type_id,
-      start_date: filters.start_date ? filters.start_date.toISOString().split('T')[0] : '',
-      end_date: filters.end_date ? filters.end_date.toISOString().split('T')[0] : '',
+      start_date: '',
+      end_date: '',
       status: ''
     });
   };
@@ -353,64 +335,55 @@ const Purchases: React.FC = () => {
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Asset Type</TableCell>
+              <TableCell>Asset Name</TableCell>
               <TableCell>Base</TableCell>
               <TableCell>Quantity</TableCell>
-              <TableCell>Unit Cost</TableCell>
-              <TableCell>Total Cost</TableCell>
               <TableCell>Supplier</TableCell>
               <TableCell>Purchase Date</TableCell>
-              <TableCell>Delivery Date</TableCell>
-              <TableCell>PO Number</TableCell>
               <TableCell>Status</TableCell>
-              <TableCell>Actions</TableCell>
+              {user?.role !== 'logistics_officer' && <TableCell>Actions</TableCell>}
             </TableRow>
           </TableHead>
           <TableBody>
             {paginatedPurchases.map((purchase) => (
               <TableRow key={purchase.id}>
-                <TableCell>{purchase.asset_type_name}</TableCell>
+                <TableCell>
+                  {assets.find((a) => a.id === purchase.asset_id)?.name || '-'}
+                </TableCell>
                 <TableCell>{purchase.base_name}</TableCell>
                 <TableCell>{purchase.quantity}</TableCell>
-                <TableCell>{formatCurrency(purchase.unit_cost)}</TableCell>
-                <TableCell>{formatCurrency(purchase.total_cost)}</TableCell>
                 <TableCell>{purchase.supplier}</TableCell>
                 <TableCell>{formatDate(purchase.purchase_date)}</TableCell>
-                <TableCell>
-                  {purchase.delivery_date ? formatDate(purchase.delivery_date) : '-'}
-                </TableCell>
-                <TableCell>{purchase.purchase_order_number}</TableCell>
                 <TableCell>
                   {purchase.status === 'pending' && <Chip label="Pending" color="warning" size="small" />}
                   {purchase.status === 'approved' && <Chip label="Approved" color="success" size="small" />}
                   {purchase.status === 'cancelled' && <Chip label="Cancelled" color="error" size="small" />}
                 </TableCell>
-                <TableCell>
-                  {(user?.role === 'admin' || (user?.role === 'base_commander' && purchase.base_id === user.base_id)) && 
-                   purchase.status === 'pending' && (
-                    <>
-                      <Tooltip title="Approve Purchase">
-                        <IconButton
-                          size="small"
-                          onClick={() => handleApprove(purchase.id)}
-                          color="success"
-                        >
-                          <ApproveIcon />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Reject Purchase">
-                        <IconButton
-                          size="small"
-                          onClick={() => handleReject(purchase.id)}
-                          color="error"
-                        >
-                          <RejectIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </>
-                  )}
-                  {user?.role !== 'logistics_officer' && (
-                    <>
+                {user?.role !== 'logistics_officer' && (
+                  <TableCell>
+                    {user?.role === 'admin' && canApprove(purchase) && (
+                      <>
+                        <Tooltip title="Approve Purchase">
+                          <IconButton
+                            size="small"
+                            onClick={() => handleApprove(purchase.id)}
+                            color="success"
+                          >
+                            <ApproveIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Reject Purchase">
+                          <IconButton
+                            size="small"
+                            onClick={() => handleReject(purchase.id)}
+                            color="error"
+                          >
+                            <RejectIcon />
+                          </IconButton>
+                        </Tooltip>
+                      </>
+                    )}
+                    {canEdit(purchase) && (
                       <IconButton
                         size="small"
                         onClick={() => handleOpenDialog(purchase)}
@@ -419,6 +392,8 @@ const Purchases: React.FC = () => {
                       >
                         <EditIcon />
                       </IconButton>
+                    )}
+                    {canDelete(purchase) && (
                       <IconButton
                         size="small"
                         onClick={() => handleDelete(purchase.id)}
@@ -427,9 +402,9 @@ const Purchases: React.FC = () => {
                       >
                         <DeleteIcon />
                       </IconButton>
-                    </>
-                  )}
-                </TableCell>
+                    )}
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>
@@ -451,21 +426,23 @@ const Purchases: React.FC = () => {
       {/* Create/Edit Dialog */}
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
         <DialogTitle>
-          {editingPurchase ? 'Edit Purchase' : 'New Purchase'}
+          {editingPurchase ? 'Edit Purchase' : 'New Purchase'} 
+          {user?.role === 'base_commander' && ' (Requires Admin Approval)'}
         </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
-              <FormControl fullWidth>
-                <InputLabel>Asset Type</InputLabel>
+              <FormControl fullWidth required>
+                <InputLabel id="asset-select-label">Asset</InputLabel>
                 <Select
-                  value={formData.asset_type_id}
-                  label="Asset Type"
-                  onChange={(e) => setFormData({ ...formData, asset_type_id: e.target.value })}
+                  labelId="asset-select-label"
+                  value={formData.asset_id}
+                  label="Asset"
+                  onChange={(e) => setFormData({ ...formData, asset_id: e.target.value })}
                 >
-                  {assetTypes.map((type) => (
-                    <MenuItem key={type.id} value={type.id}>
-                      {type.name}
+                  {assets.map((asset) => (
+                    <MenuItem key={asset.id} value={asset.id}>
+                      {asset.name}
                     </MenuItem>
                   ))}
                 </Select>
@@ -499,29 +476,9 @@ const Purchases: React.FC = () => {
             <Grid item xs={12} sm={6}>
               <TextField
                 fullWidth
-                label="Unit Cost"
-                type="number"
-                value={formData.unit_cost}
-                onChange={(e) => setFormData({ ...formData, unit_cost: parseFloat(e.target.value) || 0 })}
-                InputProps={{
-                  startAdornment: <span>$</span>,
-                }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
                 label="Supplier"
                 value={formData.supplier}
                 onChange={(e) => setFormData({ ...formData, supplier: e.target.value })}
-              />
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <TextField
-                fullWidth
-                label="Purchase Order Number"
-                value={formData.purchase_order_number}
-                onChange={(e) => setFormData({ ...formData, purchase_order_number: e.target.value })}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -532,19 +489,6 @@ const Purchases: React.FC = () => {
                   onChange={(date) => setFormData({ 
                     ...formData, 
                     purchase_date: date ? date.toISOString().split('T')[0] : '' 
-                  })}
-                  slotProps={{ textField: { fullWidth: true } }}
-                />
-              </LocalizationProvider>
-            </Grid>
-            <Grid item xs={12} sm={6}>
-              <LocalizationProvider dateAdapter={AdapterDateFns}>
-                <DatePicker
-                  label="Delivery Date"
-                  value={formData.delivery_date ? new Date(formData.delivery_date) : null}
-                  onChange={(date) => setFormData({ 
-                    ...formData, 
-                    delivery_date: date ? date.toISOString().split('T')[0] : '' 
                   })}
                   slotProps={{ textField: { fullWidth: true } }}
                 />

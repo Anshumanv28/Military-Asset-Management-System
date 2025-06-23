@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -27,35 +27,35 @@ import {
   CircularProgress,
   Card,
   CardContent,
-  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
-  Visibility as ViewIcon,
-  Search as SearchIcon,
   FilterList as FilterIcon,
   CheckCircle as ApproveIcon,
   Cancel as RejectIcon,
 } from '@mui/icons-material';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { LocalizationProvider, DatePicker } from '@mui/x-date-pickers';
 import axios from 'axios';
 import { useAuth } from '../contexts/AuthContext.tsx';
 import FilterBar from '../components/FilterBar.tsx';
 
+declare const process: {
+  env: {
+    REACT_APP_API_URL: string;
+  };
+};
+
 interface Transfer {
   id: string;
   transfer_number: string;
-  asset_type_id: string;
-  asset_type_name: string;
+  asset_name: string;
   from_base_id: string;
   from_base_name: string;
   to_base_id: string;
   to_base_name: string;
   quantity: number;
-  status: 'pending' | 'approved' | 'rejected' | 'completed' | 'cancelled';
+  status: 'pending' | 'approved' | 'rejected';
   transfer_date: string;
   approved_at?: string;
   notes?: string;
@@ -63,20 +63,21 @@ interface Transfer {
   created_at: string;
 }
 
-interface AssetType {
-  id: string;
-  name: string;
-  category: string;
-  unit_of_measure: string;
-}
-
 interface Base {
   id: string;
   name: string;
 }
 
+interface Asset {
+  id: string;
+  name: string;
+  base_id: string;
+  quantity: number;
+  available_quantity: number;
+}
+
 interface CreateTransferForm {
-  asset_type_id: string;
+  asset_name: string;
   from_base_id: string;
   to_base_id: string;
   quantity: number;
@@ -86,8 +87,8 @@ interface CreateTransferForm {
 
 const Transfers: React.FC = () => {
   const [transfers, setTransfers] = useState<Transfer[]>([]);
-  const [assetTypes, setAssetTypes] = useState<AssetType[]>([]);
   const [bases, setBases] = useState<Base[]>([]);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [page, setPage] = useState(0);
@@ -96,7 +97,7 @@ const Transfers: React.FC = () => {
   const [openDialog, setOpenDialog] = useState(false);
   const [editingTransfer, setEditingTransfer] = useState<Transfer | null>(null);
   const [formData, setFormData] = useState<CreateTransferForm>({
-    asset_type_id: '',
+    asset_name: '',
     from_base_id: '',
     to_base_id: '',
     quantity: 0,
@@ -108,7 +109,7 @@ const Transfers: React.FC = () => {
   const [filters, setFilters] = useState({
     from_base_id: '',
     to_base_id: '',
-    asset_type_id: '',
+    asset_name: '',
     status: '',
     start_date: '',
     end_date: '',
@@ -125,7 +126,7 @@ const Transfers: React.FC = () => {
       
       if (filters.from_base_id) params.append('from_base_id', filters.from_base_id);
       if (filters.to_base_id) params.append('to_base_id', filters.to_base_id);
-      if (filters.asset_type_id) params.append('asset_type_id', filters.asset_type_id);
+      if (filters.asset_name) params.append('asset_name', filters.asset_name);
       if (filters.status) params.append('status', filters.status);
       if (filters.start_date) params.append('start_date', filters.start_date);
       if (filters.end_date) params.append('end_date', filters.end_date);
@@ -140,15 +141,6 @@ const Transfers: React.FC = () => {
     }
   }, [page, rowsPerPage, filters]);
 
-  const fetchAssetTypes = async () => {
-    try {
-      const response = await axios.get(`${process.env.REACT_APP_API_URL}/asset-types`);
-      setAssetTypes(response.data.data);
-    } catch (err) {
-      console.error('Failed to fetch asset types');
-    }
-  };
-
   const fetchBases = async () => {
     try {
       const response = await axios.get(`${process.env.REACT_APP_API_URL}/bases`);
@@ -158,18 +150,46 @@ const Transfers: React.FC = () => {
     }
   };
 
+  const fetchAssets = async (baseId?: string) => {
+    try {
+      const params = new URLSearchParams();
+      params.append('status', 'available');
+      params.append('limit', '1000');
+      if (baseId) {
+        params.append('base_id', baseId);
+      }
+      
+      const response = await axios.get(`${process.env.REACT_APP_API_URL}/assets?${params}`);
+      setAssets(response.data.data);
+    } catch (err) {
+      console.error('Failed to fetch assets');
+    }
+  };
+
   useEffect(() => {
     fetchTransfers();
-    fetchAssetTypes();
     fetchBases();
+    fetchAssets();
   }, [fetchTransfers]);
 
   const handleCreateTransfer = async () => {
     try {
+      // Validate form data
+      if (!formData.from_base_id || !formData.to_base_id || !formData.asset_name || !formData.quantity || !formData.transfer_date) {
+        setError('Please fill in all required fields');
+        return;
+      }
+
+      if (formData.quantity <= 0) {
+        setError('Quantity must be greater than 0');
+        return;
+      }
+
       await axios.post(`${process.env.REACT_APP_API_URL}/transfers`, formData);
       setOpenDialog(false);
       resetForm();
       fetchTransfers();
+      setError('');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to create transfer');
     }
@@ -194,15 +214,6 @@ const Transfers: React.FC = () => {
     }
   };
 
-  const handleCompleteTransfer = async (id: string) => {
-    try {
-      await axios.put(`${process.env.REACT_APP_API_URL}/transfers/${id}/complete`);
-      fetchTransfers();
-    } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to complete transfer');
-    }
-  };
-
   const handleDeleteTransfer = async (id: string) => {
     if (window.confirm('Are you sure you want to delete this transfer?')) {
       try {
@@ -216,21 +227,20 @@ const Transfers: React.FC = () => {
 
   const resetForm = () => {
     setFormData({
-      asset_type_id: '',
+      asset_name: '',
       from_base_id: '',
       to_base_id: '',
       quantity: 0,
       transfer_date: '',
       notes: '',
     });
-    setEditingTransfer(null);
   };
 
   const handleOpenDialog = (transfer?: Transfer) => {
     if (transfer) {
       setEditingTransfer(transfer);
       setFormData({
-        asset_type_id: transfer.asset_type_id,
+        asset_name: transfer.asset_name,
         from_base_id: transfer.from_base_id,
         to_base_id: transfer.to_base_id,
         quantity: transfer.quantity,
@@ -238,6 +248,7 @@ const Transfers: React.FC = () => {
         notes: transfer.notes || '',
       });
     } else {
+      setEditingTransfer(null);
       resetForm();
     }
     setOpenDialog(true);
@@ -245,7 +256,9 @@ const Transfers: React.FC = () => {
 
   const handleCloseDialog = () => {
     setOpenDialog(false);
+    setEditingTransfer(null);
     resetForm();
+    setError('');
   };
 
   const handleChangePage = (_event: unknown, newPage: number) => {
@@ -263,14 +276,11 @@ const Transfers: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'approved':
+        return 'success';
       case 'pending':
         return 'warning';
-      case 'approved':
-        return 'info';
-      case 'completed':
-        return 'success';
       case 'rejected':
-      case 'cancelled':
         return 'error';
       default:
         return 'default';
@@ -278,37 +288,50 @@ const Transfers: React.FC = () => {
   };
 
   const canApprove = (transfer: Transfer) => {
-    return (
-      transfer.status === 'pending' &&
-      (user?.role === 'admin' || 
-       (user?.role === 'base_commander' && transfer.to_base_id === user?.base_id))
-    );
+    return transfer.status === 'pending';
   };
 
-  const canComplete = (transfer: Transfer) => {
-    return (
-      transfer.status === 'approved' &&
-      (user?.role === 'admin' || 
-       (user?.role === 'base_commander' && transfer.from_base_id === user?.base_id))
-    );
+  const canDelete = (transfer: Transfer) => {
+    if (user?.role === 'admin') {
+      return true; // Admin can delete any transfer
+    }
+    if (user?.role === 'base_commander') {
+      // Base commanders can delete pending and rejected transfers involving their base, but not approved ones
+      return (transfer.status === 'pending' || transfer.status === 'rejected') && 
+             (transfer.from_base_id === user?.base_id || transfer.to_base_id === user?.base_id);
+    }
+    return false;
+  };
+
+  const canEdit = (transfer: Transfer) => {
+    if (user?.role === 'admin') {
+      return true; // Admin can edit any transfer
+    }
+    if (user?.role === 'base_commander') {
+      // Base commanders can only edit pending transfers involving their base
+      return transfer.status === 'pending' && 
+             (transfer.from_base_id === user?.base_id || transfer.to_base_id === user?.base_id);
+    }
+    return false;
   };
 
   const handleFiltersChange = (filters: {
     base_id: string;
-    asset_type_id: string;
-    start_date: Date | null;
-    end_date: Date | null;
   }) => {
-    setFilters({
-      ...filters,
+    setFilters(prev => ({
+      ...prev,
       from_base_id: filters.base_id,
-      to_base_id: '',
-      asset_type_id: filters.asset_type_id,
-      status: '',
-      start_date: filters.start_date ? filters.start_date.toISOString().split('T')[0] : '',
-      end_date: filters.end_date ? filters.end_date.toISOString().split('T')[0] : ''
-    });
+    }));
   };
+
+  // Filter assets based on selected from_base_id
+  const filteredAssets = assets.filter(asset => 
+    !formData.from_base_id || asset.base_id === formData.from_base_id
+  );
+
+  // Get available quantity for selected asset
+  const selectedAsset = assets.find(asset => asset.name === formData.asset_name && asset.base_id === formData.from_base_id);
+  const maxQuantity = selectedAsset ? selectedAsset.available_quantity : 0;
 
   if (loading && transfers.length === 0) {
     return (
@@ -346,7 +369,7 @@ const Transfers: React.FC = () => {
 
       {/* Actions */}
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        {(user?.role === 'admin' || user?.role === 'base_commander') && (
+        {(user?.role === 'base_commander' || user?.role === 'admin') && (
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -363,19 +386,19 @@ const Transfers: React.FC = () => {
           <Table stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell>Asset Type</TableCell>
+                <TableCell>Asset Name</TableCell>
                 <TableCell>From Base</TableCell>
                 <TableCell>To Base</TableCell>
                 <TableCell align="right">Quantity</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Request Date</TableCell>
-                <TableCell>Actions</TableCell>
+                {user?.role !== 'logistics_officer' && <TableCell>Actions</TableCell>}
               </TableRow>
             </TableHead>
             <TableBody>
               {transfers.map((transfer) => (
                 <TableRow key={transfer.id} hover>
-                  <TableCell>{transfer.asset_type_name}</TableCell>
+                  <TableCell>{transfer.asset_name}</TableCell>
                   <TableCell>{transfer.from_base_name}</TableCell>
                   <TableCell>{transfer.to_base_name}</TableCell>
                   <TableCell align="right">{(transfer.quantity || 0).toLocaleString()}</TableCell>
@@ -387,58 +410,50 @@ const Transfers: React.FC = () => {
                     />
                   </TableCell>
                   <TableCell>{formatDate(transfer.transfer_date)}</TableCell>
-                  <TableCell>
-                    {user?.role === 'admin' && canApprove(transfer) && (
-                      <IconButton
-                        size="small"
-                        onClick={() => handleApproveTransfer(transfer.id)}
-                        color="success"
-                        title="Approve"
-                      >
-                        <ApproveIcon />
-                      </IconButton>
-                    )}
-                    {user?.role === 'admin' && canApprove(transfer) && (
-                      <IconButton
-                        size="small"
-                        onClick={() => handleRejectTransfer(transfer.id)}
-                        color="error"
-                        title="Reject"
-                      >
-                        <RejectIcon />
-                      </IconButton>
-                    )}
-                    {user?.role === 'admin' && canComplete(transfer) && (
-                      <IconButton
-                        size="small"
-                        onClick={() => handleCompleteTransfer(transfer.id)}
-                        color="primary"
-                        title="Complete"
-                      >
-                        <ApproveIcon />
-                      </IconButton>
-                    )}
-                    {(user?.role === 'admin' || user?.role === 'base_commander') && (
-                      <IconButton
-                        size="small"
-                        onClick={() => handleOpenDialog(transfer)}
-                        color="primary"
-                        title="Edit"
-                      >
-                        <EditIcon />
-                      </IconButton>
-                    )}
-                    {(user?.role === 'admin' || user?.role === 'base_commander') && (
-                      <IconButton
-                        size="small"
-                        onClick={() => handleDeleteTransfer(transfer.id)}
-                        color="error"
-                        title="Delete"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
-                    )}
-                  </TableCell>
+                  {user?.role !== 'logistics_officer' && (
+                    <TableCell>
+                      {user?.role === 'admin' && canApprove(transfer) && (
+                        <IconButton
+                          size="small"
+                          onClick={() => handleApproveTransfer(transfer.id)}
+                          color="success"
+                          title="Approve"
+                        >
+                          <ApproveIcon />
+                        </IconButton>
+                      )}
+                      {user?.role === 'admin' && canApprove(transfer) && (
+                        <IconButton
+                          size="small"
+                          onClick={() => handleRejectTransfer(transfer.id)}
+                          color="error"
+                          title="Reject"
+                        >
+                          <RejectIcon />
+                        </IconButton>
+                      )}
+                      {canEdit(transfer) && (
+                        <IconButton
+                          size="small"
+                          onClick={() => handleOpenDialog(transfer)}
+                          color="primary"
+                          title="Edit"
+                        >
+                          <EditIcon />
+                        </IconButton>
+                      )}
+                      {canDelete(transfer) && (
+                        <IconButton
+                          size="small"
+                          onClick={() => handleDeleteTransfer(transfer.id)}
+                          color="error"
+                          title="Delete"
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      )}
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -458,21 +473,32 @@ const Transfers: React.FC = () => {
       {/* Create/Edit Transfer Dialog */}
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="md" fullWidth>
         <DialogTitle>
-          {editingTransfer ? 'Edit Transfer' : 'Create New Transfer'} {user?.role === 'base_commander' && '(Requires Admin Approval)'}
+          {editingTransfer ? 'Edit Transfer' : 'Create New Transfer'} 
+          {user?.role === 'base_commander' && ' (Requires Admin Approval)'}
         </DialogTitle>
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
-                <InputLabel>Asset Type *</InputLabel>
+                <InputLabel>From Base *</InputLabel>
                 <Select
-                  value={formData.asset_type_id}
-                  label="Asset Type *"
-                  onChange={(e) => setFormData({ ...formData, asset_type_id: e.target.value })}
+                  value={formData.from_base_id}
+                  label="From Base *"
+                  onChange={(e) => {
+                    setFormData({ 
+                      ...formData, 
+                      from_base_id: e.target.value,
+                      asset_name: '' // Reset asset selection when base changes
+                    });
+                    // Fetch assets for the selected base
+                    if (e.target.value) {
+                      fetchAssets(e.target.value);
+                    }
+                  }}
                 >
-                  {assetTypes.map((type) => (
-                    <MenuItem key={type.id} value={type.id}>
-                      {type.name}
+                  {bases.map((base) => (
+                    <MenuItem key={base.id} value={base.id}>
+                      {base.name}
                     </MenuItem>
                   ))}
                 </Select>
@@ -480,17 +506,24 @@ const Transfers: React.FC = () => {
             </Grid>
             <Grid item xs={12} sm={6}>
               <FormControl fullWidth>
-                <InputLabel>From Base *</InputLabel>
+                <InputLabel>Asset Name *</InputLabel>
                 <Select
-                  value={formData.from_base_id}
-                  label="From Base *"
-                  onChange={(e) => setFormData({ ...formData, from_base_id: e.target.value })}
+                  value={formData.asset_name}
+                  label="Asset Name *"
+                  onChange={(e) => setFormData({ ...formData, asset_name: e.target.value })}
+                  disabled={!formData.from_base_id}
                 >
-                  {bases.map((base) => (
-                    <MenuItem key={base.id} value={base.id}>
-                      {base.name}
+                  {filteredAssets.length > 0 ? (
+                    filteredAssets.map((asset) => (
+                      <MenuItem key={asset.id} value={asset.name}>
+                        {asset.name} (Available: {asset.available_quantity.toLocaleString()})
+                      </MenuItem>
+                    ))
+                  ) : (
+                    <MenuItem disabled>
+                      {formData.from_base_id ? 'No available assets found' : 'Please select a base first'}
                     </MenuItem>
-                  ))}
+                  )}
                 </Select>
               </FormControl>
             </Grid>
@@ -516,7 +549,16 @@ const Transfers: React.FC = () => {
                 label="Quantity *"
                 type="number"
                 value={formData.quantity}
-                onChange={(e) => setFormData({ ...formData, quantity: parseInt(e.target.value) || 0 })}
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 0;
+                  setFormData({ ...formData, quantity: value });
+                }}
+                inputProps={{ 
+                  min: 1, 
+                  max: maxQuantity 
+                }}
+                helperText={selectedAsset ? `Max available: ${maxQuantity.toLocaleString()}` : ''}
+                error={formData.quantity > maxQuantity}
               />
             </Grid>
             <Grid item xs={12} sm={6}>
@@ -543,7 +585,11 @@ const Transfers: React.FC = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseDialog}>Cancel</Button>
-          <Button onClick={handleCreateTransfer} variant="contained">
+          <Button 
+            onClick={handleCreateTransfer} 
+            variant="contained"
+            disabled={!formData.from_base_id || !formData.to_base_id || !formData.asset_name || !formData.quantity || !formData.transfer_date || formData.quantity > maxQuantity}
+          >
             {editingTransfer ? 'Update' : 'Create'}
           </Button>
         </DialogActions>
@@ -552,4 +598,4 @@ const Transfers: React.FC = () => {
   );
 };
 
-export default Transfers; 
+export default Transfers;

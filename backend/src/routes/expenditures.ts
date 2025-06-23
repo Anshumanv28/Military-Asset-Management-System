@@ -10,7 +10,7 @@ const router = Router();
 // @access  Private
 router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const { base_id, asset_type_id, start_date, end_date, page = 1, limit = 10 } = req.query;
+    const { base_id, asset_name, start_date, end_date, page = 1, limit = 10 } = req.query;
     
     let whereConditions = ['1=1'];
     const params: any[] = [];
@@ -20,14 +20,18 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     if (req.user!.role === 'base_commander' && req.user!.base_id) {
       whereConditions.push(`e.base_id = $${paramIndex++}`);
       params.push(req.user!.base_id);
-    } else if (base_id && req.user!.role !== 'admin') {
+    } else if (req.user!.role === 'logistics_officer' && req.user!.base_id) {
+      whereConditions.push(`e.base_id = $${paramIndex++}`);
+      params.push(req.user!.base_id);
+    } else if (base_id) {
+      // Apply base filter for all users when provided
       whereConditions.push(`e.base_id = $${paramIndex++}`);
       params.push(base_id);
     }
 
-    if (asset_type_id) {
-      whereConditions.push(`e.asset_type_id = $${paramIndex++}`);
-      params.push(asset_type_id);
+    if (asset_name) {
+      whereConditions.push(`e.asset_name ILIKE $${paramIndex++}`);
+      params.push(`%${asset_name}%`);
     }
 
     if (start_date && end_date) {
@@ -49,11 +53,10 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     // Get paginated results
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
     const expendituresQuery = `
-      SELECT e.*, at.name as asset_type_name, at.unit_of_measure, b.name as base_name, 
+      SELECT e.*, b.name as base_name, 
              u.first_name, u.last_name,
              p.first_name as personnel_first_name, p.last_name as personnel_last_name, p.rank as personnel_rank
       FROM expenditures e
-      JOIN asset_types at ON e.asset_type_id = at.id
       JOIN bases b ON e.base_id = b.id
       JOIN users u ON e.created_by::uuid = u.id
       LEFT JOIN personnel p ON e.personnel_id = p.id
@@ -87,13 +90,13 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 // @access  Private (Admin, Base Commander, Logistics Officer)
 router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_officer'), async (req: Request, res: Response) => {
   try {
-    const { asset_type_id, base_id, quantity, expenditure_date, reason, notes } = req.body;
+    const { asset_name, base_id, quantity, expenditure_date, reason, notes } = req.body;
 
     // Validate required fields
-    if (!asset_type_id || !base_id || !quantity || !expenditure_date || !reason) {
+    if (!asset_name || !base_id || !quantity || !expenditure_date || !reason) {
       return res.status(400).json({
         success: false,
-        error: 'Asset type ID, base ID, quantity, expenditure date, and reason are required'
+        error: 'Asset name, base ID, quantity, expenditure date, and reason are required'
       });
     }
 
@@ -115,14 +118,14 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
 
     // Check if there are sufficient assets available for expenditure
     const assetResult = await query(
-      'SELECT quantity, available_quantity FROM assets WHERE asset_type_id = $1 AND base_id = $2',
-      [asset_type_id, base_id]
+      'SELECT quantity, available_quantity FROM assets WHERE asset_name = $1 AND base_id = $2',
+      [asset_name, base_id]
     );
 
     if (assetResult.rows.length === 0) {
       return res.status(400).json({
         success: false,
-        error: 'Base does not have this asset type in inventory'
+        error: 'Base does not have this asset in inventory'
       });
     }
 
@@ -140,12 +143,12 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
     try {
       // Create expenditure record
       const createQuery = `
-        INSERT INTO expenditures (asset_type_id, base_id, quantity, expenditure_date, reason, notes, created_by)
+        INSERT INTO expenditures (asset_name, base_id, quantity, expenditure_date, reason, notes, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
       `;
       const result = await query(createQuery, [
-        asset_type_id,
+        asset_name,
         base_id,
         quantity,
         expenditure_date,
@@ -162,9 +165,9 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
 
       await query(`
         UPDATE assets 
-        SET quantity = $1, available_quantity = $2, updated_at = CURRENT_TIMESTAMP
-        WHERE asset_type_id = $3 AND base_id = $4
-      `, [newQuantity, newAvailableQuantity, asset_type_id, base_id]);
+        SET quantity = $1, available_quantity = $2
+        WHERE asset_name = $3 AND base_id = $4
+      `, [newQuantity, newAvailableQuantity, asset_name, base_id]);
 
       // Update asset status based on remaining quantity
       let newStatus = 'available';
@@ -176,9 +179,9 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
 
       await query(`
         UPDATE assets 
-        SET status = $1, updated_at = CURRENT_TIMESTAMP
-        WHERE asset_type_id = $2 AND base_id = $3
-      `, [newStatus, asset_type_id, base_id]);
+        SET status = $1
+        WHERE asset_name = $2 AND base_id = $3
+      `, [newStatus, asset_name, base_id]);
 
       // Commit transaction
       await query('COMMIT');
@@ -188,7 +191,7 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
         action: 'EXPENDITURE_CREATED',
         user_id: req.user!.user_id,
         expenditure_id: newExpenditure.id,
-        asset_type_id,
+        asset_name,
         base_id,
         quantity,
         reason,
@@ -252,8 +255,8 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
       
       // Get current asset inventory
       const assetResult = await query(
-        'SELECT quantity, available_quantity FROM assets WHERE asset_type_id = $1 AND base_id = $2',
-        [expenditure.asset_type_id, expenditure.base_id]
+        'SELECT quantity, available_quantity FROM assets WHERE name = $1 AND base_id = $2',
+        [expenditure.asset_name, expenditure.base_id]
       );
 
       if (assetResult.rows.length === 0) {
@@ -277,9 +280,9 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
       // Update asset quantities
       await query(`
         UPDATE assets 
-        SET quantity = $1, available_quantity = $2, updated_at = CURRENT_TIMESTAMP
-        WHERE asset_type_id = $3 AND base_id = $4
-      `, [newQuantity, newAvailableQuantity, expenditure.asset_type_id, expenditure.base_id]);
+        SET quantity = $1, available_quantity = $2
+        WHERE name = $3 AND base_id = $4
+      `, [newQuantity, newAvailableQuantity, expenditure.asset_name, expenditure.base_id]);
     }
 
     // Update expenditure
@@ -288,8 +291,7 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
       SET quantity = COALESCE($1, quantity),
           expenditure_date = COALESCE($2, expenditure_date),
           reason = COALESCE($3, reason),
-          notes = COALESCE($4, notes),
-          updated_at = CURRENT_TIMESTAMP
+          notes = COALESCE($4, notes)
       WHERE id = $5
       RETURNING *
     `;
@@ -348,10 +350,10 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
     await query('BEGIN');
 
     try {
-      // Restore asset quantities
+      // Restore asset quantities - use 'name' column for assets table
       const assetResult = await query(
-        'SELECT quantity, available_quantity FROM assets WHERE asset_type_id = $1 AND base_id = $2',
-        [expenditure.asset_type_id, expenditure.base_id]
+        'SELECT quantity, available_quantity FROM assets WHERE name = $1 AND base_id = $2',
+        [expenditure.asset_name, expenditure.base_id]
       );
 
       if (assetResult.rows.length > 0) {
@@ -361,9 +363,9 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
 
         await query(`
           UPDATE assets 
-          SET quantity = $1, available_quantity = $2, updated_at = CURRENT_TIMESTAMP
-          WHERE asset_type_id = $3 AND base_id = $4
-        `, [newQuantity, newAvailableQuantity, expenditure.asset_type_id, expenditure.base_id]);
+          SET quantity = $1, available_quantity = $2
+          WHERE name = $3 AND base_id = $4
+        `, [newQuantity, newAvailableQuantity, expenditure.asset_name, expenditure.base_id]);
 
         // Update asset status
         let newStatus = 'available';
@@ -375,9 +377,9 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
 
         await query(`
           UPDATE assets 
-          SET status = $1, updated_at = CURRENT_TIMESTAMP
-          WHERE asset_type_id = $2 AND base_id = $3
-        `, [newStatus, expenditure.asset_type_id, expenditure.base_id]);
+          SET status = $1
+          WHERE name = $2 AND base_id = $3
+        `, [newStatus, expenditure.asset_name, expenditure.base_id]);
       }
 
       // Delete expenditure
@@ -391,7 +393,7 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
         action: 'EXPENDITURE_DELETED',
         user_id: req.user!.user_id,
         expenditure_id: id,
-        asset_type_id: expenditure.asset_type_id,
+        asset_name: expenditure.asset_name,
         quantity: expenditure.quantity
       });
 

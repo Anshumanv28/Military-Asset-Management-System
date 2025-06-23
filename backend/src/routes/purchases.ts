@@ -10,7 +10,7 @@ const router = Router();
 // @access  Private
 router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
-    const { base_id, asset_type_id, start_date, end_date, page = 1, limit = 10 } = req.query;
+    const { base_id, asset_name, start_date, end_date, page = 1, limit = 10 } = req.query;
     
     let whereConditions = ['1=1'];
     const params: any[] = [];
@@ -25,9 +25,9 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
       params.push(base_id);
     }
 
-    if (asset_type_id) {
-      whereConditions.push(`p.asset_type_id = $${paramIndex++}`);
-      params.push(asset_type_id);
+    if (asset_name) {
+      whereConditions.push(`p.asset_name ILIKE $${paramIndex++}`);
+      params.push(`%${asset_name}%`);
     }
 
     if (start_date && end_date) {
@@ -49,9 +49,8 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     // Get paginated results
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
     const purchasesQuery = `
-      SELECT p.*, at.name as asset_type_name, at.unit_of_measure, b.name as base_name, u.first_name, u.last_name
+      SELECT p.*, b.name as base_name, u.first_name, u.last_name
       FROM purchases p
-      JOIN asset_types at ON p.asset_type_id = at.id
       JOIN bases b ON p.base_id = b.id
       JOIN users u ON p.created_by::uuid = u.id
       WHERE ${whereClause}
@@ -84,13 +83,13 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 // @access  Private (Admin, Base Commander)
 router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
   try {
-    const { asset_type_id, base_id, quantity, supplier, purchase_date, delivery_date, purchase_order_number, notes } = req.body;
+    const { asset_id, base_id, quantity, supplier, purchase_date, notes } = req.body;
 
     // Validate required fields
-    if (!asset_type_id || !base_id || !quantity || !purchase_date) {
+    if (!asset_id || !base_id || !quantity || !purchase_date) {
       return res.status(400).json({
         success: false,
-        error: 'Asset type ID, base ID, quantity, and purchase date are required'
+        error: 'Asset, base, quantity, and purchase date are required'
       });
     }
 
@@ -110,31 +109,22 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
       });
     }
 
-    // Set status based on user role
-    let status = 'pending';
-    let approved_by = null;
-    let approved_at = null;
-
-    // Admin and Base Commander can auto-approve their own purchases
-    if (req.user!.role === 'admin' || req.user!.role === 'base_commander') {
-      status = 'approved';
-      approved_by = req.user!.user_id;
-      approved_at = new Date();
-    }
+    // All purchases start as pending - only admins can approve them
+    const status = 'pending';
+    const approved_by = null;
+    const approved_at = null;
 
     const createQuery = `
-      INSERT INTO purchases (asset_type_id, base_id, quantity, supplier, purchase_date, delivery_date, purchase_order_number, status, approved_by, approved_at, notes, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      INSERT INTO purchases (asset_id, base_id, quantity, supplier, purchase_date, status, approved_by, approved_at, notes, created_by)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `;
     const result = await query(createQuery, [
-      asset_type_id,
+      asset_id,
       base_id,
       quantity,
       supplier || null,
       purchase_date,
-      delivery_date || null,
-      purchase_order_number || null,
       status,
       approved_by,
       approved_at,
@@ -144,17 +134,12 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
 
     const newPurchase = result.rows[0];
 
-    // If purchase is approved, add assets to inventory automatically
-    if (status === 'approved') {
-      await addAssetsToInventory(newPurchase);
-    }
-
     // Log purchase creation
     logger.info({
       action: 'PURCHASE_CREATED',
       user_id: req.user!.user_id,
       purchase_id: newPurchase.id,
-      asset_type_id,
+      asset_id,
       quantity,
       status
     });
@@ -168,8 +153,8 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
 
 // @route   PUT /api/purchases/:id/approve
 // @desc    Approve purchase request
-// @access  Private (Admin, Base Commander)
-router.put('/:id/approve', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+// @access  Private (Admin only)
+router.put('/:id/approve', authenticate, authorize('admin'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
@@ -204,14 +189,6 @@ router.put('/:id/approve', authenticate, authorize('admin', 'base_commander'), a
       });
     }
 
-    // Check access permissions
-    if (req.user!.role === 'base_commander' && purchase.base_id !== req.user!.base_id) {
-      return res.status(403).json({
-        success: false,
-        error: 'Base commanders can only approve purchases for their base'
-      });
-    }
-
     // Approve purchase
     const approveQuery = `
       UPDATE purchases 
@@ -231,7 +208,7 @@ router.put('/:id/approve', authenticate, authorize('admin', 'base_commander'), a
       action: 'PURCHASE_APPROVED',
       user_id: req.user!.user_id,
       purchase_id: id,
-      asset_type_id: purchase.asset_type_id,
+      asset_id: purchase.asset_id,
       quantity: purchase.quantity
     });
 
@@ -369,13 +346,111 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
   }
 });
 
+// @route   PUT /api/purchases/:id
+// @desc    Update purchase
+// @access  Private (Admin, Base Commander)
+router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { asset_id, base_id, quantity, supplier, purchase_date, notes } = req.body;
+
+    // Validate required fields
+    if (!asset_id || !base_id || !quantity || !purchase_date) {
+      return res.status(400).json({
+        success: false,
+        error: 'Asset, base, quantity, and purchase date are required'
+      });
+    }
+
+    // Validate quantity
+    if (quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Quantity must be greater than 0'
+      });
+    }
+
+    // Check if purchase exists
+    const existingPurchase = await query('SELECT * FROM purchases WHERE id = $1', [id]);
+    if (existingPurchase.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Purchase not found'
+      });
+    }
+
+    const purchase = existingPurchase.rows[0];
+
+    // Check access permissions
+    if (req.user!.role === 'base_commander') {
+      if (purchase.base_id !== req.user!.base_id) {
+        return res.status(403).json({
+          success: false,
+          error: 'Base commanders can only edit purchases for their base'
+        });
+      }
+      if (purchase.status === 'approved') {
+        return res.status(403).json({
+          success: false,
+          error: 'Cannot edit approved purchases'
+        });
+      }
+    }
+
+    // Update purchase
+    const updateQuery = `
+      UPDATE purchases 
+      SET asset_id = $1, base_id = $2, quantity = $3, supplier = $4, purchase_date = $5, notes = $6
+      WHERE id = $7
+      RETURNING *
+    `;
+    const result = await query(updateQuery, [
+      asset_id,
+      base_id,
+      quantity,
+      supplier || null,
+      purchase_date,
+      notes || null,
+      id
+    ]);
+
+    const updatedPurchase = result.rows[0];
+
+    // Log purchase update
+    logger.info({
+      action: 'PURCHASE_UPDATED',
+      user_id: req.user!.user_id,
+      purchase_id: id,
+      asset_id,
+      quantity
+    });
+
+    return res.json({ success: true, data: updatedPurchase });
+  } catch (error) {
+    logger.error('Update purchase error:', error);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
 // Helper function to add assets to inventory when purchase is approved
 async function addAssetsToInventory(purchase: any) {
   try {
+    // First, get the asset name from the assets table using the asset_id
+    const assetResult = await query(
+      'SELECT name FROM assets WHERE id = $1',
+      [purchase.asset_id]
+    );
+
+    if (assetResult.rows.length === 0) {
+      throw new Error(`Asset with id ${purchase.asset_id} not found`);
+    }
+
+    const assetName = assetResult.rows[0].name;
+
     // Check if asset inventory already exists for this type and base
     const existingAsset = await query(
-      'SELECT * FROM assets WHERE asset_type_id = $1 AND base_id = $2',
-      [purchase.asset_type_id, purchase.base_id]
+      'SELECT * FROM assets WHERE name = $1 AND base_id = $2',
+      [assetName, purchase.base_id]
     );
 
     if (existingAsset.rows.length > 0) {
@@ -386,7 +461,7 @@ async function addAssetsToInventory(purchase: any) {
 
       await query(`
         UPDATE assets 
-        SET quantity = $1, available_quantity = $2, updated_at = CURRENT_TIMESTAMP
+        SET quantity = $1, available_quantity = $2
         WHERE id = $3
       `, [newQuantity, newAvailableQuantity, asset.id]);
 
@@ -400,10 +475,10 @@ async function addAssetsToInventory(purchase: any) {
     } else {
       // Create new inventory entry
       const result = await query(`
-        INSERT INTO assets (asset_type_id, base_id, quantity, available_quantity, assigned_quantity)
+        INSERT INTO assets (name, base_id, quantity, available_quantity, assigned_quantity)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING *
-      `, [purchase.asset_type_id, purchase.base_id, purchase.quantity, purchase.quantity, 0]);
+      `, [assetName, purchase.base_id, purchase.quantity, purchase.quantity, 0]);
 
       const newAsset = result.rows[0];
 
