@@ -17,16 +17,16 @@ import { useAuth } from '../contexts/AuthContext.tsx';
 
 const adminCredentials = { email: 'admin@military.gov', password: 'admin123', role: 'Admin' };
 const commanderCredentials = [
-  { username: 'price', email: 'price@tf141.gov', password: 'password123', role: 'Base Commander', base: 'Task Force 141' },
-  { username: 'graves', email: 'graves@shadow.gov', password: 'password123', role: 'Base Commander', base: 'Shadow Company' },
-  { username: 'vargas', email: 'vargas@vaqueros.gov', password: 'password123', role: 'Base Commander', base: 'Los Vaqueros' },
-  { username: 'woods', email: 'woods@kortac.gov', password: 'password123', role: 'Base Commander', base: 'KorTac' },
+  { username: 'price', email: 'price@military.gov', password: 'password123', role: 'Base Commander', base: 'Fort Bragg' },
+  { username: 'soap', email: 'soap@military.gov', password: 'password123', role: 'Base Commander', base: 'Camp Pendleton' },
+  { username: 'ghost', email: 'ghost@military.gov', password: 'password123', role: 'Base Commander', base: 'Fort Hood' },
+  { username: 'gaz', email: 'gaz@military.gov', password: 'password123', role: 'Base Commander', base: 'Joint Base Lewis-McChord' },
 ];
 const logisticsCredentials = [
-  { username: 'laswell', email: 'laswell@tf141.gov', password: 'password123', role: 'Logistics Officer', base: 'Task Force 141' },
-  { username: 'keller', email: 'keller@shadow.gov', password: 'password123', role: 'Logistics Officer', base: 'Shadow Company' },
-  { username: 'santiago', email: 'santiago@vaqueros.gov', password: 'password123', role: 'Logistics Officer', base: 'Los Vaqueros' },
-  { username: 'mason', email: 'mason@kortac.gov', password: 'password123', role: 'Logistics Officer', base: 'KorTac' },
+  { username: 'laswell', email: 'laswell@military.gov', password: 'password123', role: 'Logistics Officer', base: 'Fort Bragg' },
+  { username: 'farah', email: 'farah@military.gov', password: 'password123', role: 'Logistics Officer', base: 'Camp Pendleton' },
+  { username: 'alex', email: 'alex@military.gov', password: 'password123', role: 'Logistics Officer', base: 'Fort Hood' },
+  { username: 'nikto', email: 'nikto@military.gov', password: 'password123', role: 'Logistics Officer', base: 'Joint Base Lewis-McChord' },
 ];
 
 const Login: React.FC = () => {

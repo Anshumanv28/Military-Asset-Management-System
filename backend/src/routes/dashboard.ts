@@ -1,16 +1,17 @@
-import { Router, Request, Response } from 'express';
-import { query } from '../database/connection';
+import { Router, Response } from 'express';
+import prisma from '../lib/prisma';
 import { authenticate } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import { AuthenticatedRequest } from '../types';
 
 const router = Router();
 
 // @route   GET /api/dashboard/summary
 // @desc    Get a full summary of dashboard metrics focused on asset quantities
 // @access  Private
-router.get('/summary', authenticate, async (req: Request, res: Response) => {
+router.get('/summary', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { base_id, start_date, end_date, asset_type_id } = req.query as { [key: string]: string };
+    const { base_id, start_date, end_date } = req.query as { [key: string]: string };
     const { role, base_id: user_base_id } = req.user!;
 
     // Determine target base based on user role
@@ -23,135 +24,121 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
       targetBaseId = user_base_id || '';
     }
     
-    const queryParams: any[] = [];
-    let baseFilter = '';
-    
+    // Build where conditions for assets
+    const assetWhereConditions: any = {};
     if (targetBaseId) {
-      queryParams.push(targetBaseId);
-      baseFilter = 'AND base_id = $1';
+      assetWhereConditions.base_id = targetBaseId;
     }
     
+    // Build where conditions for purchases
+    const purchaseWhereConditions: any = { status: 'approved' };
+    if (targetBaseId) {
+      purchaseWhereConditions.base_id = targetBaseId;
+    }
     if (start_date && end_date) {
-      queryParams.push(start_date, end_date);
+      purchaseWhereConditions.purchase_date = {
+        gte: new Date(start_date),
+        lte: new Date(end_date)
+      };
     }
-    if (asset_type_id) {
-      queryParams.push(asset_type_id);
-    }
-
-    const dateFilter = (dateCol: string) => 
-      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_type_id ? 1 : 0)} AND $${queryParams.length - (asset_type_id ? 1 : 0) + 1}`;
     
-    const assetTypeFilter = asset_type_id ? 
-      `AND asset_type_id = $${queryParams.length}` : '';
+    // Build where conditions for expenditures
+    const expenditureWhereConditions: any = {};
+    if (targetBaseId) {
+      expenditureWhereConditions.base_id = targetBaseId;
+    }
+    if (start_date && end_date) {
+      expenditureWhereConditions.expenditure_date = {
+        gte: new Date(start_date),
+        lte: new Date(end_date)
+      };
+    }
+    
+    // Build where conditions for transfers
+    const transferWhereConditions: any = { status: 'approved' };
+    if (start_date && end_date) {
+      transferWhereConditions.transfer_date = {
+        gte: new Date(start_date),
+        lte: new Date(end_date)
+      };
+    }
 
     // Get total asset quantities
-    const totalQuantitiesQuery = `
-      SELECT COALESCE(SUM(quantity), 0) AS count 
-      FROM assets 
-      WHERE 1=1 ${baseFilter} ${assetTypeFilter}
-    `;
+    const totalQuantities = await prisma.assets.aggregate({
+      where: assetWhereConditions,
+      _sum: { quantity: true }
+    });
 
     // Get available asset quantities
-    const availableQuantitiesQuery = `
-      SELECT COALESCE(SUM(available_quantity), 0) AS count 
-      FROM assets 
-      WHERE 1=1 ${baseFilter} ${assetTypeFilter}
-    `;
+    const availableQuantities = await prisma.assets.aggregate({
+      where: assetWhereConditions,
+      _sum: { available_quantity: true }
+    });
 
     // Get assigned asset quantities
-    const assignedQuantitiesQuery = `
-      SELECT COALESCE(SUM(assigned_quantity), 0) AS count 
-      FROM assets 
-      WHERE 1=1 ${baseFilter} ${assetTypeFilter}
-    `;
+    const assignedQuantities = await prisma.assets.aggregate({
+      where: assetWhereConditions,
+      _sum: { assigned_quantity: true }
+    });
 
     // Get low stock asset quantities
-    const lowStockQuantitiesQuery = `
-      SELECT COALESCE(SUM(quantity), 0) AS count 
-      FROM assets 
-      WHERE status = 'low_stock' ${baseFilter} ${assetTypeFilter}
-    `;
+    const lowStockQuantities = await prisma.assets.aggregate({
+      where: { ...assetWhereConditions, status: 'low_stock' },
+      _sum: { quantity: true }
+    });
 
     // Get assets purchased in date range (quantities)
-    const purchasedQuantitiesQuery = `
-      SELECT COALESCE(SUM(quantity), 0) AS count 
-      FROM purchases 
-      WHERE status = 'approved' ${baseFilter} ${assetTypeFilter} ${dateFilter('purchase_date')}
-    `;
-
-    // Get assets transferred in (approved transfers - quantities)
-    const transfersInQuery = `
-      SELECT COALESCE(SUM(quantity), 0) AS count 
-      FROM transfers
-      WHERE status = 'approved' AND to_base_id = $1 ${assetTypeFilter} ${dateFilter('transfer_date')}
-    `;
-
-    // Get assets transferred out (approved transfers - quantities)
-    const transfersOutQuery = `
-      SELECT COALESCE(SUM(quantity), 0) AS count 
-      FROM transfers
-      WHERE status = 'approved' AND from_base_id = $1 ${assetTypeFilter} ${dateFilter('transfer_date')}
-    `;
+    const purchasedQuantities = await prisma.purchases.aggregate({
+      where: purchaseWhereConditions,
+      _sum: { quantity: true }
+    });
 
     // Get assets expended in date range (quantities)
-    const expendedQuantitiesQuery = `
-      SELECT COALESCE(SUM(quantity), 0) AS count 
-      FROM expenditures 
-      WHERE 1=1 ${baseFilter} ${assetTypeFilter} ${dateFilter('expenditure_date')}
-    `;
+    const expendedQuantities = await prisma.expenditures.aggregate({
+      where: expenditureWhereConditions,
+      _sum: { quantity: true }
+    });
 
-    const queries = [
-      query(totalQuantitiesQuery, queryParams),
-      query(availableQuantitiesQuery, queryParams),
-      query(assignedQuantitiesQuery, queryParams),
-      query(lowStockQuantitiesQuery, queryParams),
-      query(purchasedQuantitiesQuery, queryParams),
-      query(expendedQuantitiesQuery, queryParams)
-    ];
+    // Get transfers based on role and base
+    let transfersIn = 0;
+    let transfersOut = 0;
 
-    // Add transfer queries only if we have a specific base
     if (targetBaseId) {
-      queries.push(query(transfersInQuery, [targetBaseId, ...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
-      queries.push(query(transfersOutQuery, [targetBaseId, ...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
+      // Get transfers in (to this base)
+      const transfersInResult = await prisma.transfers.aggregate({
+        where: { ...transferWhereConditions, to_base_id: targetBaseId },
+        _sum: { quantity: true }
+      });
+      transfersIn = transfersInResult._sum.quantity || 0;
+
+      // Get transfers out (from this base)
+      const transfersOutResult = await prisma.transfers.aggregate({
+        where: { ...transferWhereConditions, from_base_id: targetBaseId },
+        _sum: { quantity: true }
+      });
+      transfersOut = transfersOutResult._sum.quantity || 0;
     } else if (role === 'admin') {
       // For admin viewing all bases, show combined transfers
-      const adminTransfersQuery = `
-        SELECT COALESCE(SUM(quantity), 0) AS count 
-        FROM transfers
-        WHERE status = 'approved' ${assetTypeFilter} ${dateFilter('transfer_date')}
-      `;
-      queries.push(query(adminTransfersQuery, [...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
-      queries.push(query(adminTransfersQuery, [...(asset_type_id ? [asset_type_id] : []), ...(start_date && end_date ? [start_date, end_date] : [])]));
-    } else {
-      // For non-admin users viewing all bases, transfers are not applicable
-      queries.push(Promise.resolve({ rows: [{ count: '0' }] }));
-      queries.push(Promise.resolve({ rows: [{ count: '0' }] }));
+      const adminTransfersResult = await prisma.transfers.aggregate({
+        where: transferWhereConditions,
+        _sum: { quantity: true }
+      });
+      const totalTransfers = adminTransfersResult._sum.quantity || 0;
+      transfersIn = totalTransfers;
+      transfersOut = totalTransfers;
     }
 
-    const [
-      totalQuantitiesRes,
-      availableQuantitiesRes,
-      assignedQuantitiesRes,
-      lowStockQuantitiesRes,
-      purchasedQuantitiesRes,
-      expendedQuantitiesRes,
-      transfersInRes,
-      transfersOutRes
-    ] = await Promise.all(queries);
-    
-    const total_quantities = parseInt(totalQuantitiesRes.rows[0].count) || 0;
-    const available_quantities = parseInt(availableQuantitiesRes.rows[0].count) || 0;
-    const assigned_quantities = parseInt(assignedQuantitiesRes.rows[0].count) || 0;
-    const low_stock_quantities = parseInt(lowStockQuantitiesRes.rows[0].count) || 0;
-    const purchased_quantities = parseInt(purchasedQuantitiesRes.rows[0].count) || 0;
-    const expended_quantities = parseInt(expendedQuantitiesRes.rows[0].count) || 0;
-    const transfers_in = parseInt(transfersInRes.rows[0].count) || 0;
-    const transfers_out = parseInt(transfersOutRes.rows[0].count) || 0;
+    const total_quantities = totalQuantities._sum.quantity || 0;
+    const available_quantities = availableQuantities._sum.available_quantity || 0;
+    const assigned_quantities = assignedQuantities._sum.assigned_quantity || 0;
+    const low_stock_quantities = lowStockQuantities._sum.quantity || 0;
+    const purchased_quantities = purchasedQuantities._sum.quantity || 0;
+    const expended_quantities = expendedQuantities._sum.quantity || 0;
 
     // Calculate opening and closing balance for asset quantities
-    const opening_balance = total_quantities - purchased_quantities - transfers_in + transfers_out + expended_quantities;
+    const opening_balance = total_quantities - purchased_quantities - transfersIn + transfersOut + expended_quantities;
     const closing_balance = total_quantities;
-    const net_movement = purchased_quantities + transfers_in - transfers_out - expended_quantities;
+    const net_movement = purchased_quantities + transfersIn - transfersOut - expended_quantities;
 
     res.json({
       success: true,
@@ -164,8 +151,8 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
         assigned_assets: assigned_quantities,
         maintenance_assets: low_stock_quantities,
         purchased_assets: purchased_quantities,
-        transfers_in,
-        transfers_out,
+        transfers_in: transfersIn,
+        transfers_out: transfersOut,
         expended_assets: expended_quantities
       }
     });
@@ -182,9 +169,9 @@ router.get('/summary', authenticate, async (req: Request, res: Response) => {
 // @route   GET /api/dashboard/movements
 // @desc    Get recent asset movements (purchases and transfers)
 // @access  Private
-router.get('/movements', authenticate, async (req: Request, res: Response) => {
+router.get('/movements', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { base_id, start_date, end_date, asset_name } = req.query as { [key: string]: string };
+    const { base_id, start_date, end_date } = req.query as { [key: string]: string };
     const { role, base_id: user_base_id } = req.user!;
 
     // Determine target base based on user role
@@ -195,69 +182,75 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
       targetBaseId = user_base_id || '';
     }
     
-    const queryParams: any[] = [];
-    let baseFilter = '';
-    
+    // Build where conditions for purchases
+    const purchaseWhereConditions: any = { status: 'approved' };
     if (targetBaseId) {
-      queryParams.push(targetBaseId);
-      baseFilter = 'AND p.base_id = $1';
+      purchaseWhereConditions.base_id = targetBaseId;
     }
-    
     if (start_date && end_date) {
-      queryParams.push(start_date, end_date);
+      purchaseWhereConditions.purchase_date = {
+        gte: new Date(start_date),
+        lte: new Date(end_date)
+      };
     }
-    if (asset_name) {
-      queryParams.push(asset_name);
+    
+    // Build where conditions for transfers
+    const transferWhereConditions: any = { status: 'approved' };
+    if (start_date && end_date) {
+      transferWhereConditions.transfer_date = {
+        gte: new Date(start_date),
+        lte: new Date(end_date)
+      };
     }
-
-    const dateFilter = (dateCol: string) => 
-      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_name ? 1 : 0)} AND $${queryParams.length - (asset_name ? 1 : 0) + 1}`;
-    
-    const purchaseAssetNameFilter = asset_name ? 
-      `AND a.name ILIKE $${queryParams.length}` : '';
-    
-    const transferAssetNameFilter = asset_name ? 
-      `AND t.asset_name ILIKE $${queryParams.length}` : '';
 
     // Get purchases breakdown
-    const purchasesQuery = `
-      SELECT 
-        p.id,
-        a.name as name,
-        a.name as asset_name,
-        p.quantity,
-        b.name as base_name,
-        p.purchase_date as date
-      FROM purchases p
-      JOIN assets a ON p.asset_id = a.id
-      JOIN bases b ON p.base_id = b.id
-      WHERE p.status = 'approved' ${baseFilter} ${purchaseAssetNameFilter} ${dateFilter('p.purchase_date')}
-      ORDER BY p.purchase_date DESC
-      LIMIT 10
-    `;
+    const purchases = await prisma.purchases.findMany({
+      where: purchaseWhereConditions,
+      include: {
+        assets: {
+          select: { name: true }
+        },
+        bases: {
+          select: { name: true }
+        }
+      },
+      orderBy: { purchase_date: 'desc' },
+      take: 10
+    });
 
     // Get transfers breakdown
-    const transfersQuery = `
-      SELECT 
-        t.id,
-        t.asset_name as name,
-        t.asset_name as asset_name,
-        t.quantity,
-        fb.name as from_base_name,
-        tb.name as to_base_name,
-        t.transfer_date as date
-      FROM transfers t
-      JOIN bases fb ON t.from_base_id = fb.id
-      JOIN bases tb ON t.to_base_id = tb.id
-      WHERE t.status = 'approved' ${baseFilter ? 'AND (t.from_base_id = $1 OR t.to_base_id = $1)' : ''} ${transferAssetNameFilter} ${dateFilter('t.transfer_date')}
-      ORDER BY t.transfer_date DESC
-      LIMIT 10
-    `;
+    let transfers: any[] = [];
+    if (targetBaseId) {
+      transfers = await prisma.transfers.findMany({
+        where: {
+          ...transferWhereConditions,
+          OR: [
+            { from_base_id: targetBaseId },
+            { to_base_id: targetBaseId }
+          ]
+        },
+        include: {
+          bases_transfers_from_base_idTobases: {
+            select: { name: true }
+          },
+          bases_transfers_to_base_idTobases: {
+            select: { name: true }
+          }
+        },
+        orderBy: { transfer_date: 'desc' },
+        take: 10
+      });
+    }
 
-    const [purchasesRes, transfersRes] = await Promise.all([
-      query(purchasesQuery, queryParams),
-      query(transfersQuery, queryParams)
-    ]);
+    // Transform purchases data
+    const purchasedAssets = purchases.map(purchase => ({
+      id: purchase.id,
+      name: purchase.assets.name,
+      asset_name: purchase.assets.name,
+      quantity: purchase.quantity,
+      base_name: purchase.bases.name,
+      date: purchase.purchase_date
+    }));
 
     // Separate transfers into incoming and outgoing based on target base
     let transfersIn: any[] = [];
@@ -265,20 +258,42 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
     
     if (targetBaseId) {
       // Get the base name for the target base
-      const baseQuery = 'SELECT name FROM bases WHERE id = $1';
-      const baseRes = await query(baseQuery, [targetBaseId]);
-      const targetBaseName = baseRes.rows[0]?.name;
+      const targetBase = await prisma.bases.findUnique({
+        where: { id: targetBaseId },
+        select: { name: true }
+      });
       
-      if (targetBaseName) {
-        transfersIn = transfersRes.rows.filter((t: any) => t.to_base_name === targetBaseName);
-        transfersOut = transfersRes.rows.filter((t: any) => t.from_base_name === targetBaseName);
+      if (targetBase) {
+        transfersIn = transfers
+          .filter(t => t.bases_transfers_to_base_idTobases.name === targetBase.name)
+          .map(t => ({
+            id: t.id,
+            name: t.asset_name,
+            asset_name: t.asset_name,
+            quantity: t.quantity,
+            from_base_name: t.bases_transfers_from_base_idTobases.name,
+            to_base_name: t.bases_transfers_to_base_idTobases.name,
+            date: t.transfer_date
+          }));
+        
+        transfersOut = transfers
+          .filter(t => t.bases_transfers_from_base_idTobases.name === targetBase.name)
+          .map(t => ({
+            id: t.id,
+            name: t.asset_name,
+            asset_name: t.asset_name,
+            quantity: t.quantity,
+            from_base_name: t.bases_transfers_from_base_idTobases.name,
+            to_base_name: t.bases_transfers_to_base_idTobases.name,
+            date: t.transfer_date
+          }));
       }
     }
 
     res.json({
       success: true,
       data: {
-        purchased_assets: purchasesRes.rows,
+        purchased_assets: purchasedAssets,
         transfers_in: transfersIn,
         transfers_out: transfersOut
       }
@@ -296,7 +311,7 @@ router.get('/movements', authenticate, async (req: Request, res: Response) => {
 // @route   GET /api/dashboard/inventory
 // @desc    Get current inventory status by asset name
 // @access  Private
-router.get('/inventory', authenticate, async (req: Request, res: Response) => {
+router.get('/inventory', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { base_id } = req.query;
     const { role, base_id: user_base_id } = req.user!;
@@ -309,33 +324,38 @@ router.get('/inventory', authenticate, async (req: Request, res: Response) => {
       targetBaseId = user_base_id || '';
     }
     
-    const queryParams: any[] = [];
-    let baseFilter = '';
-    
+    // Build where conditions
+    const whereConditions: any = {};
     if (targetBaseId) {
-      queryParams.push(targetBaseId);
-      baseFilter = 'WHERE a.base_id = $1';
+      whereConditions.base_id = targetBaseId;
     }
 
-    const inventoryQuery = `
-      SELECT 
-        a.name as asset_name,
-        a.quantity,
-        a.available_quantity,
-        a.assigned_quantity,
-        a.status,
-        b.name as base_name
-      FROM assets a
-      JOIN bases b ON a.base_id = b.id
-      ${baseFilter}
-      ORDER BY a.name, b.name
-    `;
+    const inventory = await prisma.assets.findMany({
+      where: whereConditions,
+      include: {
+        bases: {
+          select: { name: true }
+        }
+      },
+      orderBy: [
+        { name: 'asc' },
+        { bases: { name: 'asc' } }
+      ]
+    });
 
-    const inventoryRes = await query(inventoryQuery, queryParams);
+    // Transform data to match expected format
+    const inventoryData = inventory.map(asset => ({
+      asset_name: asset.name,
+      quantity: asset.quantity,
+      available_quantity: asset.available_quantity,
+      assigned_quantity: asset.assigned_quantity,
+      status: asset.status,
+      base_name: asset.bases.name
+    }));
 
     res.json({
       success: true,
-      data: inventoryRes.rows
+      data: inventoryData
     });
 
   } catch (error) {
@@ -350,9 +370,9 @@ router.get('/inventory', authenticate, async (req: Request, res: Response) => {
 // @route   GET /api/dashboard/expended-assets
 // @desc    Get expended assets data for chart visualization
 // @access  Private
-router.get('/expended-assets', authenticate, async (req: Request, res: Response) => {
+router.get('/expended-assets', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { base_id, start_date, end_date, asset_name } = req.query as { [key: string]: string };
+    const { base_id, start_date, end_date } = req.query as { [key: string]: string };
     const { role, base_id: user_base_id } = req.user!;
 
     // Determine target base based on user role
@@ -363,45 +383,37 @@ router.get('/expended-assets', authenticate, async (req: Request, res: Response)
       targetBaseId = user_base_id || '';
     }
     
-    const queryParams: any[] = [];
-    let baseFilter = '';
-    
+    // Build where conditions
+    const whereConditions: any = {};
     if (targetBaseId) {
-      queryParams.push(targetBaseId);
-      baseFilter = 'AND e.base_id = $1';
+      whereConditions.base_id = targetBaseId;
     }
-    
     if (start_date && end_date) {
-      queryParams.push(start_date, end_date);
+      whereConditions.expenditure_date = {
+        gte: new Date(start_date),
+        lte: new Date(end_date)
+      };
     }
-    if (asset_name) {
-      queryParams.push(asset_name);
-    }
-
-    const dateFilter = (dateCol: string) => 
-      !start_date || !end_date ? '' : `AND ${dateCol}::date BETWEEN $${queryParams.length - (asset_name ? 1 : 0)} AND $${queryParams.length - (asset_name ? 1 : 0) + 1}`;
-    
-    const assetNameFilter = asset_name ? 
-      `AND e.asset_name ILIKE $${queryParams.length}` : '';
 
     // Get expended assets by asset name
-    const expendedAssetsQuery = `
-      SELECT 
-        e.asset_name,
-        COALESCE(SUM(e.quantity), 0) as expended_quantity
-      FROM expenditures e
-      WHERE 1=1 ${baseFilter} ${assetNameFilter} ${dateFilter('e.expenditure_date')}
-      GROUP BY e.asset_name
-      ORDER BY expended_quantity DESC
-      LIMIT 10
-    `;
-
-    const expendedAssetsRes = await query(expendedAssetsQuery, queryParams);
+    const expendedAssets = await prisma.expenditures.groupBy({
+      by: ['asset_name'],
+      where: whereConditions,
+      _sum: {
+        quantity: true
+      },
+      orderBy: {
+        _sum: {
+          quantity: 'desc'
+        }
+      },
+      take: 10
+    });
 
     // Format data for chart
-    const chartData = expendedAssetsRes.rows.map((row: any) => ({
-      name: row.asset_name,
-      value: parseInt(row.expended_quantity) || 0
+    const chartData = expendedAssets.map(item => ({
+      name: item.asset_name,
+      value: item._sum.quantity || 0
     }));
 
     res.json({

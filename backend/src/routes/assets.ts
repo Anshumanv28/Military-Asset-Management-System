@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { query } from '../database/connection';
 import { authenticate, authorize } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import prisma from '../lib/prisma';
 
 const router = Router();
 
@@ -12,58 +12,60 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
     const { base_id, name, status, page = 1, limit = 10 } = req.query;
     
-    let whereConditions = ['1=1'];
-    const params: any[] = [];
-    let paramIndex = 1;
+    // Build where conditions for Prisma
+    const where: any = {};
 
     // Apply filters based on user role
     if (req.user!.role === 'base_commander' && req.user!.base_id) {
-      whereConditions.push(`a.base_id = $${paramIndex++}`);
-      params.push(req.user!.base_id);
+      where.base_id = req.user!.base_id;
     } else if (base_id && req.user!.role !== 'admin') {
-      whereConditions.push(`a.base_id = $${paramIndex++}`);
-      params.push(base_id);
+      where.base_id = base_id as string;
     }
 
     if (name) {
-      whereConditions.push(`a.name ILIKE $${paramIndex++}`);
-      params.push(`%${name}%`);
+      where.name = {
+        contains: name as string,
+        mode: 'insensitive'
+      };
     }
 
     if (status) {
-      whereConditions.push(`a.status = $${paramIndex++}`);
-      params.push(status);
+      where.status = status as string;
     }
 
-    const whereClause = whereConditions.join(' AND ');
-
     // Get total count
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM assets a
-      WHERE ${whereClause}
-    `;
-    const countResult = await query(countQuery, params);
-    const total = parseInt(countResult.rows[0].total);
+    const total = await prisma.assets.count({ where });
 
-    // Get paginated results
+    // Get paginated results with base information
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
-    const assetsQuery = `
-      SELECT 
-        a.*,
-        b.name as current_base_name,
-        b.code as base_code
-      FROM assets a
-      JOIN bases b ON a.base_id = b.id
-      WHERE ${whereClause}
-      ORDER BY a.name, b.name
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-    `;
-    const assetsResult = await query(assetsQuery, [...params, parseInt(limit as string), offset]);
+    const assets = await prisma.assets.findMany({
+      where,
+      include: {
+        bases: {
+          select: {
+            name: true,
+            code: true
+          }
+        }
+      },
+      orderBy: [
+        { name: 'asc' },
+        { bases: { name: 'asc' } }
+      ],
+      take: parseInt(limit as string),
+      skip: offset
+    });
+
+    // Transform data to match expected format
+    const transformedAssets = assets.map(asset => ({
+      ...asset,
+      current_base_name: asset.bases.name,
+      base_code: asset.bases.code
+    }));
 
     res.json({
       success: true,
-      data: assetsResult.rows,
+      data: transformedAssets,
       pagination: {
         page: parseInt(page as string),
         limit: parseInt(limit as string),
@@ -87,25 +89,31 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const assetQuery = `
-      SELECT 
-        a.*,
-        b.name as current_base_name,
-        b.code as base_code
-      FROM assets a
-      JOIN bases b ON a.base_id = b.id
-      WHERE a.id = $1
-    `;
-    const assetResult = await query(assetQuery, [id]);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Asset ID is required'
+      });
+    }
 
-    if (assetResult.rows.length === 0) {
+    const asset = await prisma.assets.findUnique({
+      where: { id },
+      include: {
+        bases: {
+          select: {
+            name: true,
+            code: true
+          }
+        }
+      }
+    });
+
+    if (!asset) {
       return res.status(404).json({
         success: false,
         error: 'Asset not found'
       });
     }
-
-    const asset = assetResult.rows[0];
 
     // Check access permissions
     if (req.user!.role === 'base_commander' && asset.base_id !== req.user!.base_id) {
@@ -115,9 +123,16 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
       });
     }
 
+    // Transform data to match expected format
+    const transformedAsset = {
+      ...asset,
+      current_base_name: asset.bases.name,
+      base_code: asset.bases.code
+    };
+
     return res.json({
       success: true,
-      data: asset
+      data: transformedAsset
     });
   } catch (error) {
     logger.error('Get asset by ID error:', error);
@@ -149,12 +164,11 @@ router.post('/', authenticate, authorize('admin'), async (req: Request, res: Res
     }
 
     // Check if base exists
-    const baseCheck = await query(
-      'SELECT id FROM bases WHERE id = $1',
-      [base_id]
-    );
+    const base = await prisma.bases.findUnique({
+      where: { id: base_id }
+    });
 
-    if (baseCheck.rows.length === 0) {
+    if (!base) {
       return res.status(400).json({
         success: false,
         error: 'Base not found'
@@ -162,12 +176,14 @@ router.post('/', authenticate, authorize('admin'), async (req: Request, res: Res
     }
 
     // Check if asset already exists for this name and base
-    const existingAsset = await query(
-      'SELECT id FROM assets WHERE name = $1 AND base_id = $2',
-      [name, base_id]
-    );
+    const existingAsset = await prisma.assets.findFirst({
+      where: {
+        name,
+        base_id
+      }
+    });
 
-    if (existingAsset.rows.length > 0) {
+    if (existingAsset) {
       return res.status(400).json({
         success: false,
         error: 'Asset inventory already exists for this name and base'
@@ -186,20 +202,15 @@ router.post('/', authenticate, authorize('admin'), async (req: Request, res: Res
       });
     }
 
-    const createQuery = `
-      INSERT INTO assets (name, base_id, quantity, available_quantity, assigned_quantity)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *
-    `;
-    const result = await query(createQuery, [
-      name,
-      base_id,
-      quantity,
-      finalAvailableQuantity,
-      finalAssignedQuantity
-    ]);
-
-    const newAsset = result.rows[0];
+    const newAsset = await prisma.assets.create({
+      data: {
+        name,
+        base_id,
+        quantity,
+        available_quantity: finalAvailableQuantity,
+        assigned_quantity: finalAssignedQuantity
+      }
+    });
 
     // Log asset creation
     logger.info({
@@ -229,20 +240,24 @@ router.put('/:id', authenticate, authorize('admin'), async (req: Request, res: R
     const { id } = req.params;
     const { quantity, available_quantity, assigned_quantity, status } = req.body;
 
-    // Get current asset
-    const currentAsset = await query(
-      'SELECT * FROM assets WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Asset ID is required'
+      });
+    }
 
-    if (currentAsset.rows.length === 0) {
+    // Get current asset
+    const currentAsset = await prisma.assets.findUnique({
+      where: { id }
+    });
+
+    if (!currentAsset) {
       return res.status(404).json({
         success: false,
         error: 'Asset not found'
       });
     }
-
-    const asset = currentAsset.rows[0];
 
     // Validate quantities
     if (quantity !== undefined && quantity < 0) {
@@ -252,9 +267,9 @@ router.put('/:id', authenticate, authorize('admin'), async (req: Request, res: R
       });
     }
 
-    const finalQuantity = quantity !== undefined ? quantity : asset.quantity;
-    const finalAvailableQuantity = available_quantity !== undefined ? available_quantity : asset.available_quantity;
-    const finalAssignedQuantity = assigned_quantity !== undefined ? assigned_quantity : asset.assigned_quantity;
+    const finalQuantity = quantity !== undefined ? quantity : currentAsset.quantity;
+    const finalAvailableQuantity = available_quantity !== undefined ? available_quantity : currentAsset.available_quantity;
+    const finalAssignedQuantity = assigned_quantity !== undefined ? assigned_quantity : currentAsset.assigned_quantity;
 
     if (finalAvailableQuantity + finalAssignedQuantity > finalQuantity) {
       return res.status(400).json({
@@ -264,28 +279,22 @@ router.put('/:id', authenticate, authorize('admin'), async (req: Request, res: R
     }
 
     // Update asset
-    const updateQuery = `
-      UPDATE assets 
-      SET quantity = $1, available_quantity = $2, assigned_quantity = $3, status = $4
-      WHERE id = $5
-      RETURNING *
-    `;
-    const result = await query(updateQuery, [
-      finalQuantity,
-      finalAvailableQuantity,
-      finalAssignedQuantity,
-      status || asset.status,
-      id
-    ]);
-
-    const updatedAsset = result.rows[0];
+    const updatedAsset = await prisma.assets.update({
+      where: { id },
+      data: {
+        quantity: finalQuantity,
+        available_quantity: finalAvailableQuantity,
+        assigned_quantity: finalAssignedQuantity,
+        status: status || currentAsset.status
+      }
+    });
 
     // Log asset update
     logger.info({
       action: 'ASSET_INVENTORY_UPDATED',
       user_id: req.user!.user_id,
       asset_id: id,
-      old_quantity: asset.quantity,
+      old_quantity: currentAsset.quantity,
       new_quantity: finalQuantity
     });
 
@@ -306,28 +315,35 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
   try {
     const { id } = req.params;
 
-    // Check if asset exists
-    const assetCheck = await query(
-      'SELECT * FROM assets WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Asset ID is required'
+      });
+    }
 
-    if (assetCheck.rows.length === 0) {
+    // Check if asset exists
+    const asset = await prisma.assets.findUnique({
+      where: { id }
+    });
+
+    if (!asset) {
       return res.status(404).json({
         success: false,
         error: 'Asset not found'
       });
     }
 
-    const asset = assetCheck.rows[0];
+    // Check if asset has assignments (using asset_name instead of asset_type_id)
+    const assignmentCount = await prisma.assignments.count({
+      where: {
+        asset_name: asset.name,
+        base_id: asset.base_id,
+        status: 'active'
+      }
+    });
 
-    // Check if asset has assignments
-    const assignmentCheck = await query(
-      'SELECT COUNT(*) as count FROM assignments WHERE asset_type_id = $1 AND base_id = $2 AND status = $3',
-      [asset.asset_type_id, asset.base_id, 'active']
-    );
-
-    if (parseInt(assignmentCheck.rows[0].count) > 0) {
+    if (assignmentCount > 0) {
       return res.status(400).json({
         success: false,
         error: 'Cannot delete asset with active assignments'
@@ -335,14 +351,16 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
     }
 
     // Delete asset
-    await query('DELETE FROM assets WHERE id = $1', [id]);
+    await prisma.assets.delete({
+      where: { id }
+    });
 
     // Log asset deletion
     logger.info({
       action: 'ASSET_INVENTORY_DELETED',
       user_id: req.user!.user_id,
       asset_id: id,
-      asset_type_id: asset.asset_type_id,
+      asset_name: asset.name,
       base_id: asset.base_id
     });
 
@@ -351,6 +369,7 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
       message: 'Asset inventory deleted successfully'
     });
   } catch (error) {
+    logger.error('Delete asset error:', error);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });

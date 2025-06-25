@@ -229,16 +229,7 @@ const Assets: React.FC = () => {
 
       {/* Actions */}
       <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        {user?.role === 'admin' && (
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={() => handleOpenDialog()}
-            startIcon={<EditIcon />}
-          >
-            Create Asset
-          </Button>
-        )}
+        {/* Create Asset button removed */}
       </Box>
 
       {/* Assets Table */}

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { query } from '../database/connection';
 import { authenticate, authorize } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import prisma from '../lib/prisma';
 
 const router = Router();
 
@@ -12,51 +12,52 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
   try {
     const { base_id, rank, page = 1, limit = 10 } = req.query;
     
-    let whereConditions = ['1=1'];
-    const params: any[] = [];
-    let paramIndex = 1;
+    // Build where conditions for Prisma
+    const where: any = {};
 
     // Apply filters based on user role
     if (req.user!.role === 'base_commander' && req.user!.base_id) {
-      whereConditions.push(`base_id = $${paramIndex++}`);
-      params.push(req.user!.base_id);
+      where.base_id = req.user!.base_id;
     } else if (base_id && req.user!.role !== 'admin') {
-      whereConditions.push(`base_id = $${paramIndex++}`);
-      params.push(base_id);
+      where.base_id = base_id as string;
     }
 
     if (rank) {
-      whereConditions.push(`rank = $${paramIndex++}`);
-      params.push(rank);
+      where.rank = rank as string;
     }
 
-    const whereClause = whereConditions.join(' AND ');
-
     // Get total count
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM personnel
-      WHERE ${whereClause}
-    `;
-    const countResult = await query(countQuery, params);
-    const total = parseInt(countResult.rows[0].total);
+    const total = await prisma.personnel.count({ where });
 
-    // Get paginated results
+    // Get paginated results with base information
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
-    const personnelQuery = `
-      SELECT p.*, b.name as base_name,
-             CONCAT(p.first_name, ' ', p.last_name) as full_name
-      FROM personnel p
-      LEFT JOIN bases b ON p.base_id = b.id
-      WHERE ${whereClause}
-      ORDER BY p.first_name, p.last_name
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-    `;
-    const personnelResult = await query(personnelQuery, [...params, parseInt(limit as string), offset]);
+    const personnel = await prisma.personnel.findMany({
+      where,
+      include: {
+        bases: {
+          select: {
+            name: true
+          }
+        }
+      },
+      orderBy: [
+        { first_name: 'asc' },
+        { last_name: 'asc' }
+      ],
+      take: parseInt(limit as string),
+      skip: offset
+    });
+
+    // Transform data to match expected format
+    const transformedPersonnel = personnel.map(person => ({
+      ...person,
+      base_name: person.bases.name,
+      full_name: `${person.first_name} ${person.last_name}`
+    }));
 
     res.json({
       success: true,
-      data: personnelResult.rows,
+      data: transformedPersonnel,
       pagination: {
         page: parseInt(page as string),
         limit: parseInt(limit as string),
@@ -80,23 +81,30 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const personnelQuery = `
-      SELECT p.*, b.name as base_name,
-             CONCAT(p.first_name, ' ', p.last_name) as full_name
-      FROM personnel p
-      LEFT JOIN bases b ON p.base_id = b.id
-      WHERE p.id = $1
-    `;
-    const result = await query(personnelQuery, [id]);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Personnel ID is required'
+      });
+    }
 
-    if (result.rows.length === 0) {
+    const personnel = await prisma.personnel.findUnique({
+      where: { id },
+      include: {
+        bases: {
+          select: {
+            name: true
+          }
+        }
+      }
+    });
+
+    if (!personnel) {
       return res.status(404).json({
         success: false,
         error: 'Personnel not found'
       });
     }
-
-    const personnel = result.rows[0];
 
     // Check access permissions
     if (req.user!.role === 'base_commander' && personnel.base_id !== req.user!.base_id) {
@@ -106,9 +114,16 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
       });
     }
 
+    // Transform data to match expected format
+    const transformedPersonnel = {
+      ...personnel,
+      base_name: personnel.bases.name,
+      full_name: `${personnel.first_name} ${personnel.last_name}`
+    };
+
     return res.json({
       success: true,
-      data: personnel
+      data: transformedPersonnel
     });
   } catch (error) {
     logger.error('Get personnel error:', error);
@@ -137,22 +152,17 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
     // Base commanders can only create personnel for their base
     const targetBaseId = req.user!.role === 'base_commander' ? req.user!.base_id : base_id;
 
-    const createQuery = `
-      INSERT INTO personnel (first_name, last_name, rank, base_id, email, phone, department)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *
-    `;
-    const result = await query(createQuery, [
-      first_name,
-      last_name,
-      rank,
-      targetBaseId,
-      email || null,
-      phone || null,
-      department || null
-    ]);
-
-    const newPersonnel = result.rows[0];
+    const newPersonnel = await prisma.personnel.create({
+      data: {
+        first_name,
+        last_name,
+        rank,
+        base_id: targetBaseId,
+        email: email || null,
+        phone: phone || null,
+        department: department || null
+      }
+    });
 
     // Log personnel creation
     logger.info({
@@ -183,23 +193,27 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
     const { id } = req.params;
     const { first_name, last_name, rank, base_id, email, phone, department } = req.body;
 
-    // Check if personnel exists
-    const existingPersonnel = await query(
-      'SELECT * FROM personnel WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Personnel ID is required'
+      });
+    }
 
-    if (existingPersonnel.rows.length === 0) {
+    // Check if personnel exists
+    const existingPersonnel = await prisma.personnel.findUnique({
+      where: { id }
+    });
+
+    if (!existingPersonnel) {
       return res.status(404).json({
         success: false,
         error: 'Personnel not found'
       });
     }
 
-    const personnel = existingPersonnel.rows[0];
-
     // Check access permissions
-    if (req.user!.role === 'base_commander' && personnel.base_id !== req.user!.base_id) {
+    if (req.user!.role === 'base_commander' && existingPersonnel.base_id !== req.user!.base_id) {
       return res.status(403).json({
         success: false,
         error: 'Access denied to this personnel record'
@@ -209,30 +223,20 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
     // Base commanders can only update personnel in their base
     const targetBaseId = req.user!.role === 'base_commander' ? req.user!.base_id : base_id;
 
-    const updateQuery = `
-      UPDATE personnel 
-      SET first_name = COALESCE($1, first_name),
-          last_name = COALESCE($2, last_name),
-          rank = COALESCE($3, rank),
-          base_id = COALESCE($4, base_id),
-          email = COALESCE($5, email),
-          phone = COALESCE($6, phone),
-          department = COALESCE($7, department)
-      WHERE id = $8
-      RETURNING *
-    `;
-    const result = await query(updateQuery, [
-      first_name,
-      last_name,
-      rank,
-      targetBaseId,
-      email,
-      phone,
-      department,
-      id
-    ]);
+    // Build update data
+    const updateData: any = {};
+    if (first_name !== undefined) updateData.first_name = first_name;
+    if (last_name !== undefined) updateData.last_name = last_name;
+    if (rank !== undefined) updateData.rank = rank;
+    if (targetBaseId !== undefined) updateData.base_id = targetBaseId;
+    if (email !== undefined) updateData.email = email;
+    if (phone !== undefined) updateData.phone = phone;
+    if (department !== undefined) updateData.department = department;
 
-    const updatedPersonnel = result.rows[0];
+    const updatedPersonnel = await prisma.personnel.update({
+      where: { id },
+      data: updateData
+    });
 
     // Log personnel update
     logger.info({
@@ -262,23 +266,27 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
   try {
     const { id } = req.params;
 
-    // Check if personnel exists
-    const existingPersonnel = await query(
-      'SELECT * FROM personnel WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Personnel ID is required'
+      });
+    }
 
-    if (existingPersonnel.rows.length === 0) {
+    // Check if personnel exists
+    const existingPersonnel = await prisma.personnel.findUnique({
+      where: { id }
+    });
+
+    if (!existingPersonnel) {
       return res.status(404).json({
         success: false,
         error: 'Personnel not found'
       });
     }
 
-    const personnel = existingPersonnel.rows[0];
-
     // Check access permissions
-    if (req.user!.role === 'base_commander' && personnel.base_id !== req.user!.base_id) {
+    if (req.user!.role === 'base_commander' && existingPersonnel.base_id !== req.user!.base_id) {
       return res.status(403).json({
         success: false,
         error: 'Access denied to this personnel record'
@@ -286,27 +294,30 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
     }
 
     // Check if personnel has active assignments
-    const assignmentCheck = await query(
-      'SELECT COUNT(*) as count FROM assignments WHERE assigned_to = $1 AND status = $2',
-      [id, 'active']
-    );
+    const assignmentCount = await prisma.assignments.count({
+      where: {
+        assigned_to: id,
+        status: 'active'
+      }
+    });
 
-    if (parseInt(assignmentCheck.rows[0].count) > 0) {
+    if (assignmentCount > 0) {
       return res.status(400).json({
         success: false,
         error: 'Cannot delete personnel with active assignments'
       });
     }
 
-    const deleteQuery = 'DELETE FROM personnel WHERE id = $1';
-    await query(deleteQuery, [id]);
+    await prisma.personnel.delete({
+      where: { id }
+    });
 
     // Log personnel deletion
     logger.info({
       action: 'PERSONNEL_DELETED',
       user_id: req.user!.user_id,
       personnel_id: id,
-      personnel_name: `${personnel.first_name} ${personnel.last_name}`
+      personnel_name: `${existingPersonnel.first_name} ${existingPersonnel.last_name}`
     });
 
     return res.json({

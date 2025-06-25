@@ -1,67 +1,90 @@
-import { Router, Request, Response } from 'express';
-import { query } from '../database/connection';
+import { Router, Response } from 'express';
+import prisma from '../lib/prisma';
 import { authenticate, authorize } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import { AuthenticatedRequest } from '../types';
 
 const router = Router();
 
 // @route   GET /api/purchases
 // @desc    Get all purchases with filters
 // @access  Private
-router.get('/', authenticate, async (req: Request, res: Response) => {
+router.get('/', authenticate, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { base_id, asset_name, start_date, end_date, page = 1, limit = 10 } = req.query;
     
-    let whereConditions = ['1=1'];
-    const params: any[] = [];
-    let paramIndex = 1;
+    // Build where conditions
+    const whereConditions: any = {};
 
     // Apply filters based on user role
     if (req.user!.role === 'base_commander' && req.user!.base_id) {
-      whereConditions.push(`p.base_id = $${paramIndex++}`);
-      params.push(req.user!.base_id);
+      whereConditions.base_id = req.user!.base_id;
     } else if (base_id && req.user!.role !== 'admin') {
-      whereConditions.push(`p.base_id = $${paramIndex++}`);
-      params.push(base_id);
+      whereConditions.base_id = base_id as string;
     }
 
     if (asset_name) {
-      whereConditions.push(`p.asset_name ILIKE $${paramIndex++}`);
-      params.push(`%${asset_name}%`);
+      whereConditions.assets = {
+        name: {
+          contains: asset_name as string,
+          mode: 'insensitive'
+        }
+      };
     }
 
     if (start_date && end_date) {
-      whereConditions.push(`p.purchase_date BETWEEN $${paramIndex++} AND $${paramIndex++}`);
-      params.push(start_date, end_date);
+      whereConditions.purchase_date = {
+        gte: new Date(start_date as string),
+        lte: new Date(end_date as string)
+      };
     }
 
-    const whereClause = whereConditions.join(' AND ');
-
     // Get total count
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM purchases p
-      WHERE ${whereClause}
-    `;
-    const countResult = await query(countQuery, params);
-    const total = parseInt(countResult.rows[0].total);
+    const total = await prisma.purchases.count({
+      where: whereConditions
+    });
 
     // Get paginated results
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
-    const purchasesQuery = `
-      SELECT p.*, b.name as base_name, u.first_name, u.last_name
-      FROM purchases p
-      JOIN bases b ON p.base_id = b.id
-      JOIN users u ON p.created_by::uuid = u.id
-      WHERE ${whereClause}
-      ORDER BY p.purchase_date DESC
-      LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-    `;
-    const purchasesResult = await query(purchasesQuery, [...params, parseInt(limit as string), offset]);
+    const purchases = await prisma.purchases.findMany({
+      where: whereConditions,
+      include: {
+        bases: {
+          select: {
+            name: true
+          }
+        },
+        users_purchases_created_byTousers: {
+          select: {
+            first_name: true,
+            last_name: true
+          }
+        },
+        assets: {
+          select: {
+            name: true
+          }
+        }
+      },
+      orderBy: {
+        purchase_date: 'desc'
+      },
+      take: parseInt(limit as string),
+      skip: offset
+    });
+
+    // Transform data to match expected format
+    const transformedPurchases = purchases.map(purchase => ({
+      ...purchase,
+      base_name: purchase.bases.name,
+      first_name: purchase.users_purchases_created_byTousers.first_name,
+      last_name: purchase.users_purchases_created_byTousers.last_name,
+      asset_name: purchase.assets.name
+    }));
 
     res.json({
       success: true,
-      data: purchasesResult.rows,
+      data: transformedPurchases,
       pagination: {
         page: parseInt(page as string),
         limit: parseInt(limit as string),
@@ -81,7 +104,7 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
 // @route   POST /api/purchases
 // @desc    Create new purchase (Create operation - adds assets to inventory)
 // @access  Private (Admin, Base Commander)
-router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+router.post('/', authenticate, authorize('admin', 'base_commander'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { asset_id, base_id, quantity, supplier, purchase_date, notes } = req.body;
 
@@ -111,28 +134,21 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
 
     // All purchases start as pending - only admins can approve them
     const status = 'pending';
-    const approved_by = null;
-    const approved_at = null;
 
-    const createQuery = `
-      INSERT INTO purchases (asset_id, base_id, quantity, supplier, purchase_date, status, approved_by, approved_at, notes, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING *
-    `;
-    const result = await query(createQuery, [
-      asset_id,
-      base_id,
-      quantity,
-      supplier || null,
-      purchase_date,
-      status,
-      approved_by,
-      approved_at,
-      notes || null,
-      req.user!.user_id
-    ]);
-
-    const newPurchase = result.rows[0];
+    const newPurchase = await prisma.purchases.create({
+      data: {
+        asset_id,
+        base_id,
+        quantity,
+        supplier: supplier || null,
+        purchase_date: new Date(purchase_date),
+        status,
+        approved_by: null,
+        approved_at: null,
+        notes: notes || null,
+        created_by: req.user!.user_id
+      }
+    });
 
     // Log purchase creation
     logger.info({
@@ -154,24 +170,28 @@ router.post('/', authenticate, authorize('admin', 'base_commander'), async (req:
 // @route   PUT /api/purchases/:id/approve
 // @desc    Approve purchase request
 // @access  Private (Admin only)
-router.put('/:id/approve', authenticate, authorize('admin'), async (req: Request, res: Response) => {
+router.put('/:id/approve', authenticate, authorize('admin'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Check if purchase exists
-    const purchaseResult = await query(
-      'SELECT * FROM purchases WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Purchase ID is required'
+      });
+    }
 
-    if (purchaseResult.rows.length === 0) {
+    // Check if purchase exists
+    const purchase = await prisma.purchases.findUnique({
+      where: { id }
+    });
+
+    if (!purchase) {
       return res.status(404).json({
         success: false,
         error: 'Purchase not found'
       });
     }
-
-    const purchase = purchaseResult.rows[0];
 
     // Check if already approved
     if (purchase.status === 'approved') {
@@ -190,15 +210,14 @@ router.put('/:id/approve', authenticate, authorize('admin'), async (req: Request
     }
 
     // Approve purchase
-    const approveQuery = `
-      UPDATE purchases 
-      SET status = 'approved', approved_by = $1, approved_at = CURRENT_TIMESTAMP
-      WHERE id = $2
-      RETURNING *
-    `;
-    const result = await query(approveQuery, [req.user!.user_id, id]);
-
-    const approvedPurchase = result.rows[0];
+    const approvedPurchase = await prisma.purchases.update({
+      where: { id },
+      data: {
+        status: 'approved',
+        approved_by: req.user!.user_id,
+        approved_at: new Date()
+      }
+    });
 
     // Add assets to inventory
     await addAssetsToInventory(approvedPurchase);
@@ -225,24 +244,28 @@ router.put('/:id/approve', authenticate, authorize('admin'), async (req: Request
 // @route   PUT /api/purchases/:id/cancel
 // @desc    Cancel purchase request
 // @access  Private (Admin, Base Commander)
-router.put('/:id/cancel', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+router.put('/:id/cancel', authenticate, authorize('admin', 'base_commander'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Check if purchase exists
-    const purchaseResult = await query(
-      'SELECT * FROM purchases WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Purchase ID is required'
+      });
+    }
 
-    if (purchaseResult.rows.length === 0) {
+    // Check if purchase exists
+    const purchase = await prisma.purchases.findUnique({
+      where: { id }
+    });
+
+    if (!purchase) {
       return res.status(404).json({
         success: false,
         error: 'Purchase not found'
       });
     }
-
-    const purchase = purchaseResult.rows[0];
 
     // Check if already cancelled
     if (purchase.status === 'cancelled') {
@@ -269,15 +292,12 @@ router.put('/:id/cancel', authenticate, authorize('admin', 'base_commander'), as
     }
 
     // Cancel purchase
-    const cancelQuery = `
-      UPDATE purchases 
-      SET status = 'cancelled'
-      WHERE id = $1
-      RETURNING *
-    `;
-    const result = await query(cancelQuery, [id]);
-
-    const cancelledPurchase = result.rows[0];
+    const cancelledPurchase = await prisma.purchases.update({
+      where: { id },
+      data: {
+        status: 'cancelled'
+      }
+    });
 
     // Log purchase cancellation
     logger.info({
@@ -299,24 +319,28 @@ router.put('/:id/cancel', authenticate, authorize('admin', 'base_commander'), as
 // @route   DELETE /api/purchases/:id
 // @desc    Delete purchase
 // @access  Private (Admin only)
-router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res: Response) => {
+router.delete('/:id', authenticate, authorize('admin'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
 
-    // Check if purchase exists
-    const purchaseResult = await query(
-      'SELECT * FROM purchases WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Purchase ID is required'
+      });
+    }
 
-    if (purchaseResult.rows.length === 0) {
+    // Check if purchase exists
+    const purchase = await prisma.purchases.findUnique({
+      where: { id }
+    });
+
+    if (!purchase) {
       return res.status(404).json({
         success: false,
         error: 'Purchase not found'
       });
     }
-
-    const purchase = purchaseResult.rows[0];
 
     // Check if purchase is approved
     if (purchase.status === 'approved') {
@@ -327,7 +351,9 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
     }
 
     // Delete purchase
-    await query('DELETE FROM purchases WHERE id = $1', [id]);
+    await prisma.purchases.delete({
+      where: { id }
+    });
 
     // Log purchase deletion
     logger.info({
@@ -349,10 +375,17 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
 // @route   PUT /api/purchases/:id
 // @desc    Update purchase
 // @access  Private (Admin, Base Commander)
-router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (req: Request, res: Response) => {
+router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const { asset_id, base_id, quantity, supplier, purchase_date, notes } = req.body;
+
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Purchase ID is required'
+      });
+    }
 
     // Validate required fields
     if (!asset_id || !base_id || !quantity || !purchase_date) {
@@ -371,25 +404,26 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
     }
 
     // Check if purchase exists
-    const existingPurchase = await query('SELECT * FROM purchases WHERE id = $1', [id]);
-    if (existingPurchase.rows.length === 0) {
+    const existingPurchase = await prisma.purchases.findUnique({
+      where: { id }
+    });
+
+    if (!existingPurchase) {
       return res.status(404).json({
         success: false,
         error: 'Purchase not found'
       });
     }
 
-    const purchase = existingPurchase.rows[0];
-
     // Check access permissions
     if (req.user!.role === 'base_commander') {
-      if (purchase.base_id !== req.user!.base_id) {
+      if (existingPurchase.base_id !== req.user!.base_id) {
         return res.status(403).json({
           success: false,
           error: 'Base commanders can only edit purchases for their base'
         });
       }
-      if (purchase.status === 'approved') {
+      if (existingPurchase.status === 'approved') {
         return res.status(403).json({
           success: false,
           error: 'Cannot edit approved purchases'
@@ -398,23 +432,17 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
     }
 
     // Update purchase
-    const updateQuery = `
-      UPDATE purchases 
-      SET asset_id = $1, base_id = $2, quantity = $3, supplier = $4, purchase_date = $5, notes = $6
-      WHERE id = $7
-      RETURNING *
-    `;
-    const result = await query(updateQuery, [
-      asset_id,
-      base_id,
-      quantity,
-      supplier || null,
-      purchase_date,
-      notes || null,
-      id
-    ]);
-
-    const updatedPurchase = result.rows[0];
+    const updatedPurchase = await prisma.purchases.update({
+      where: { id },
+      data: {
+        asset_id,
+        base_id,
+        quantity,
+        supplier: supplier || null,
+        purchase_date: new Date(purchase_date),
+        notes: notes || null
+      }
+    });
 
     // Log purchase update
     logger.info({
@@ -433,54 +461,58 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
 });
 
 // Helper function to add assets to inventory when purchase is approved
-async function addAssetsToInventory(purchase: any) {
+async function addAssetsToInventory(purchase: { id: string; asset_id: string; base_id: string; quantity: number }) {
   try {
     // First, get the asset name from the assets table using the asset_id
-    const assetResult = await query(
-      'SELECT name FROM assets WHERE id = $1',
-      [purchase.asset_id]
-    );
+    const asset = await prisma.assets.findUnique({
+      where: { id: purchase.asset_id }
+    });
 
-    if (assetResult.rows.length === 0) {
+    if (!asset) {
       throw new Error(`Asset with id ${purchase.asset_id} not found`);
     }
 
-    const assetName = assetResult.rows[0].name;
+    const assetName = asset.name;
 
     // Check if asset inventory already exists for this type and base
-    const existingAsset = await query(
-      'SELECT * FROM assets WHERE name = $1 AND base_id = $2',
-      [assetName, purchase.base_id]
-    );
+    const existingAsset = await prisma.assets.findFirst({
+      where: {
+        name: assetName,
+        base_id: purchase.base_id
+      }
+    });
 
-    if (existingAsset.rows.length > 0) {
+    if (existingAsset) {
       // Update existing inventory
-      const asset = existingAsset.rows[0];
-      const newQuantity = asset.quantity + purchase.quantity;
-      const newAvailableQuantity = asset.available_quantity + purchase.quantity;
+      const newQuantity = existingAsset.quantity + purchase.quantity;
+      const newAvailableQuantity = existingAsset.available_quantity + purchase.quantity;
 
-      await query(`
-        UPDATE assets 
-        SET quantity = $1, available_quantity = $2
-        WHERE id = $3
-      `, [newQuantity, newAvailableQuantity, asset.id]);
+      await prisma.assets.update({
+        where: { id: existingAsset.id },
+        data: {
+          quantity: newQuantity,
+          available_quantity: newAvailableQuantity
+        }
+      });
 
       logger.info({
         action: 'ASSET_INVENTORY_UPDATED_FROM_PURCHASE',
         purchase_id: purchase.id,
-        asset_id: asset.id,
+        asset_id: existingAsset.id,
         added_quantity: purchase.quantity,
         new_total_quantity: newQuantity
       });
     } else {
       // Create new inventory entry
-      const result = await query(`
-        INSERT INTO assets (name, base_id, quantity, available_quantity, assigned_quantity)
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING *
-      `, [assetName, purchase.base_id, purchase.quantity, purchase.quantity, 0]);
-
-      const newAsset = result.rows[0];
+      const newAsset = await prisma.assets.create({
+        data: {
+          name: assetName,
+          base_id: purchase.base_id,
+          quantity: purchase.quantity,
+          available_quantity: purchase.quantity,
+          assigned_quantity: 0
+        }
+      });
 
       logger.info({
         action: 'ASSET_INVENTORY_CREATED_FROM_PURCHASE',

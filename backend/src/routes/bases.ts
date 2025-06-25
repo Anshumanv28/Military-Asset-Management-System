@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { query } from '../database/connection';
 import { authenticate, authorize } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import prisma from '../lib/prisma';
 
 const router = Router();
 
@@ -13,50 +13,53 @@ router.get('/', authenticate, async (req: Request, res: Response) => {
     const { page = '1', limit = '10', is_active, commander_id } = req.query;
     const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
     
-    let whereConditions = ['b.is_active = true'];
-    let queryParams: any[] = [];
-    let paramIndex = 1;
+    // Build where conditions for Prisma
+    const where: any = {};
 
     // Add status filter
     if (is_active !== undefined && is_active !== '') {
-      whereConditions.push(`b.is_active = $${paramIndex}`);
-      queryParams.push(is_active === 'true');
-      paramIndex++;
+      where.is_active = is_active === 'true';
+    } else {
+      // Default to active bases only
+      where.is_active = true;
     }
 
     // Add commander filter
     if (commander_id && commander_id !== '') {
-      whereConditions.push(`b.commander_id = $${paramIndex}`);
-      queryParams.push(commander_id);
-      paramIndex++;
+      where.commander_id = commander_id as string;
     }
 
-    const whereClause = whereConditions.join(' AND ');
-
     // Get total count
-    const countQuery = `
-      SELECT COUNT(*) as total
-      FROM bases b
-      WHERE ${whereClause}
-    `;
-    const countResult = await query(countQuery, queryParams);
-    const total = parseInt(countResult.rows[0].total);
+    const total = await prisma.bases.count({ where });
 
-    // Get paginated results
-    const basesQuery = `
-      SELECT b.*, u.first_name, u.last_name
-      FROM bases b
-      LEFT JOIN users u ON b.commander_id = u.id
-      WHERE ${whereClause}
-      ORDER BY b.name
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `;
-    
-    const result = await query(basesQuery, [...queryParams, parseInt(limit as string), offset]);
+    // Get paginated results with commander information
+    const bases = await prisma.bases.findMany({
+      where,
+      include: {
+        users_bases_commander_idTousers: {
+          select: {
+            first_name: true,
+            last_name: true
+          }
+        }
+      },
+      orderBy: {
+        name: 'asc'
+      },
+      take: parseInt(limit as string),
+      skip: offset
+    });
+
+    // Transform data to match expected format
+    const transformedBases = bases.map(base => ({
+      ...base,
+      first_name: base.users_bases_commander_idTousers?.first_name || null,
+      last_name: base.users_bases_commander_idTousers?.last_name || null
+    }));
 
     return res.json({
       success: true,
-      data: result.rows,
+      data: transformedBases,
       pagination: {
         page: parseInt(page as string),
         limit: parseInt(limit as string),
@@ -80,24 +83,45 @@ router.get('/:id', authenticate, async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const baseQuery = `
-      SELECT b.*, u.first_name, u.last_name
-      FROM bases b
-      LEFT JOIN users u ON b.commander_id = u.id
-      WHERE b.id = $1 AND b.is_active = true
-    `;
-    const result = await query(baseQuery, [id]);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Base ID is required'
+      });
+    }
 
-    if (result.rows.length === 0) {
+    const base = await prisma.bases.findFirst({
+      where: {
+        id,
+        is_active: true
+      },
+      include: {
+        users_bases_commander_idTousers: {
+          select: {
+            first_name: true,
+            last_name: true
+          }
+        }
+      }
+    });
+
+    if (!base) {
       return res.status(404).json({
         success: false,
         error: 'Base not found'
       });
     }
 
+    // Transform data to match expected format
+    const transformedBase = {
+      ...base,
+      first_name: base.users_bases_commander_idTousers?.first_name || null,
+      last_name: base.users_bases_commander_idTousers?.last_name || null
+    };
+
     return res.json({
       success: true,
-      data: result.rows[0]
+      data: transformedBase
     });
   } catch (error) {
     logger.error('Get base error:', error);
@@ -124,31 +148,25 @@ router.post('/', authenticate, authorize('admin'), async (req: Request, res: Res
     }
 
     // Check if code already exists
-    const existingBase = await query(
-      'SELECT id FROM bases WHERE code = $1',
-      [code]
-    );
+    const existingBase = await prisma.bases.findUnique({
+      where: { code }
+    });
 
-    if (existingBase.rows.length > 0) {
+    if (existingBase) {
       return res.status(400).json({
         success: false,
         error: 'Base code already exists'
       });
     }
 
-    const createQuery = `
-      INSERT INTO bases (name, code, location, commander_id)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-    `;
-    const result = await query(createQuery, [
-      name,
-      code,
-      location,
-      commander_id || null
-    ]);
-
-    const newBase = result.rows[0];
+    const newBase = await prisma.bases.create({
+      data: {
+        name,
+        code,
+        location,
+        commander_id: commander_id || null
+      }
+    });
 
     // Log base creation
     logger.info({
@@ -179,13 +197,19 @@ router.put('/:id', authenticate, authorize('admin'), async (req: Request, res: R
     const { id } = req.params;
     const { name, code, location, commander_id, is_active } = req.body;
 
-    // Check if base exists
-    const existingBase = await query(
-      'SELECT id FROM bases WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Base ID is required'
+      });
+    }
 
-    if (existingBase.rows.length === 0) {
+    // Check if base exists
+    const existingBase = await prisma.bases.findUnique({
+      where: { id }
+    });
+
+    if (!existingBase) {
       return res.status(404).json({
         success: false,
         error: 'Base not found'
@@ -193,13 +217,12 @@ router.put('/:id', authenticate, authorize('admin'), async (req: Request, res: R
     }
 
     // Check if code already exists (excluding current base)
-    if (code) {
-      const codeExists = await query(
-        'SELECT id FROM bases WHERE code = $1 AND id != $2',
-        [code, id]
-      );
+    if (code && code !== existingBase.code) {
+      const codeExists = await prisma.bases.findUnique({
+        where: { code }
+      });
 
-      if (codeExists.rows.length > 0) {
+      if (codeExists) {
         return res.status(400).json({
           success: false,
           error: 'Base code already exists'
@@ -207,27 +230,18 @@ router.put('/:id', authenticate, authorize('admin'), async (req: Request, res: R
       }
     }
 
-    const updateQuery = `
-      UPDATE bases 
-      SET name = COALESCE($1, name),
-          code = COALESCE($2, code),
-          location = COALESCE($3, location),
-          commander_id = $4,
-          is_active = COALESCE($5, is_active)
-      WHERE id = $6
-      RETURNING *
-    `;
-    
-    const result = await query(updateQuery, [
-      name,
-      code,
-      location,
-      commander_id || null,
-      is_active,
-      id
-    ]);
+    // Build update data
+    const updateData: any = {};
+    if (name !== undefined) updateData.name = name;
+    if (code !== undefined) updateData.code = code;
+    if (location !== undefined) updateData.location = location;
+    if (commander_id !== undefined) updateData.commander_id = commander_id || null;
+    if (is_active !== undefined) updateData.is_active = is_active;
 
-    const updatedBase = result.rows[0];
+    const updatedBase = await prisma.bases.update({
+      where: { id },
+      data: updateData
+    });
 
     // Log base update
     logger.info({
@@ -257,13 +271,20 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
   try {
     const { id } = req.params;
 
-    // Check if base exists
-    const existingBase = await query(
-      'SELECT id, name FROM bases WHERE id = $1',
-      [id]
-    );
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Base ID is required'
+      });
+    }
 
-    if (existingBase.rows.length === 0) {
+    // Check if base exists
+    const existingBase = await prisma.bases.findUnique({
+      where: { id },
+      select: { id: true, name: true }
+    });
+
+    if (!existingBase) {
       return res.status(404).json({
         success: false,
         error: 'Base not found'
@@ -271,15 +292,10 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
     }
 
     // Soft delete by setting is_active to false
-    const deleteQuery = `
-      UPDATE bases 
-      SET is_active = false
-      WHERE id = $1
-      RETURNING *
-    `;
-    
-    const result = await query(deleteQuery, [id]);
-    const deletedBase = result.rows[0];
+    const deletedBase = await prisma.bases.update({
+      where: { id },
+      data: { is_active: false }
+    });
 
     // Log base deletion
     logger.info({
