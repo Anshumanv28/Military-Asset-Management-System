@@ -22,10 +22,9 @@ app.use(helmet());
 
 // CORS configuration
 const allowedOrigins = [
-  process.env['FRONTEND_URL'] || 'http://localhost:3000',
-  'https://your-frontend-name.vercel.app', // You'll update this after frontend deployment
-  'https://military-assets-frontend.vercel.app' // Example frontend URL
-].filter(Boolean);
+  'http://localhost:3000',
+  'https://military-asset-management-system-7vex3fwvi.vercel.app'
+];
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -35,6 +34,7 @@ app.use(cors({
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
+      console.log('CORS blocked origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
