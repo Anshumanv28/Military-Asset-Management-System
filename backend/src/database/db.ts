@@ -14,6 +14,7 @@ const sql = postgres(connectionString, {
   max_lifetime: 60 * 30, // Close connections after 30 minutes
   onnotice: () => {}, // Suppress notice messages
   onparameter: () => {}, // Suppress parameter messages
+  prepare: false, // Disable prepared statements for serverless environments
 });
 
 export default sql; 

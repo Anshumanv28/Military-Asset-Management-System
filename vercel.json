@@ -22,10 +22,5 @@
       "src": "/(.*)",
       "dest": "/frontend/$1"
     }
-  ],
-  "functions": {
-    "backend/api/index.ts": {
-      "maxDuration": 30
-    }
-  }
+  ]
 } 

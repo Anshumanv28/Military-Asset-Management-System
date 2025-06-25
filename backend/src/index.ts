@@ -14,12 +14,30 @@ dotenv.config();
 const app = express();
 const PORT = process.env['PORT'] || 3001;
 
+// Trust proxy for Vercel deployment (fixes rate limiting issues)
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 
 // CORS configuration
+const allowedOrigins = [
+  process.env['FRONTEND_URL'] || 'http://localhost:3000',
+  'https://your-frontend-name.vercel.app', // You'll update this after frontend deployment
+  'https://military-assets-frontend.vercel.app' // Example frontend URL
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env['FRONTEND_URL'] || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -53,7 +71,8 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
-    environment: process.env['NODE_ENV']
+    environment: process.env['NODE_ENV'],
+    version: 'v1'
   });
 });
 
@@ -65,6 +84,27 @@ app.get('/api/health', (_req, res) => {
     environment: process.env['NODE_ENV'],
     version: process.env['API_VERSION'] || 'v1'
   });
+});
+
+// Database health check endpoint (separate from basic health)
+app.get('/api/health/db', async (_req, res) => {
+  try {
+    await testConnection();
+    res.json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      environment: process.env['NODE_ENV'],
+      database: 'connected'
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'ERROR',
+      timestamp: new Date().toISOString(),
+      environment: process.env['NODE_ENV'],
+      database: 'disconnected',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 // Import routes
@@ -90,6 +130,35 @@ app.use('/api/expenditures', expendituresRoutes);
 app.use('/api/bases', basesRoutes);
 app.use('/api/personnel', personnelRoutes);
 app.use('/api/users', usersRoutes);
+
+// Handle favicon requests
+app.get('/favicon.ico', (_req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Favicon not found'
+  });
+});
+
+app.get('/favicon.png', (_req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Favicon not found'
+  });
+});
+
+// Root endpoint
+app.get('/', (_req, res) => {
+  res.json({
+    success: true,
+    message: 'Military Asset Management System API',
+    version: 'v1',
+    endpoints: {
+      health: '/api/health',
+      database: '/api/health/db',
+      docs: 'API documentation available at /api/* endpoints'
+    }
+  });
+});
 
 // 404 handler
 app.use('*', (_req, res) => {
@@ -147,4 +216,5 @@ if (process.env['NODE_ENV'] !== 'production' || !process.env['VERCEL']) {
   startServer();
 }
 
+// Export for Vercel serverless functions
 export default app; 

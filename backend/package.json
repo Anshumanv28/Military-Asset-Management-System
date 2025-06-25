@@ -7,6 +7,7 @@
     "start": "node dist/index.js",
     "dev": "dotenv -e .env -- nodemon src/index.ts",
     "build": "tsc",
+    "vercel-build": "tsc",
     "test": "jest",
     "test:watch": "jest --watch",
     "seed": "dotenv -e .env -- ts-node src/database/seed.ts",
@@ -23,6 +24,7 @@
   "license": "MIT",
   "dependencies": {
     "@prisma/client": "^6.10.1",
+    "@vercel/node": "^5.3.0",
     "axios": "^1.10.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
