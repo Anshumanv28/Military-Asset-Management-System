@@ -5,11 +5,11 @@
   "main": "dist/index.js",
   "scripts": {
     "start": "node dist/index.js",
-    "dev": "nodemon src/index.ts",
+    "dev": "dotenv -e .env -- nodemon src/index.ts",
     "build": "tsc",
     "test": "jest",
     "test:watch": "jest --watch",
-    "seed": "ts-node src/database/seed.ts",
+    "seed": "dotenv -e .env -- ts-node src/database/seed.ts",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint src/**/*.ts --fix"
   },
@@ -35,8 +35,7 @@
     "moment": "^2.29.4",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "pg": "^8.11.3",
-    "pg-pool": "^3.6.1",
+    "postgres": "^3.4.7",
     "uuid": "^9.0.1",
     "winston": "^3.11.0"
   },
@@ -53,6 +52,7 @@
     "@types/uuid": "^9.0.7",
     "@typescript-eslint/eslint-plugin": "^6.9.1",
     "@typescript-eslint/parser": "^6.9.1",
+    "dotenv-cli": "^8.0.0",
     "eslint": "^8.52.0",
     "jest": "^29.7.0",
     "nodemon": "^3.0.1",

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { query } from '../database/connection';
 import { authenticate, authorize } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import sql from '../database/db';
 
 const router = Router();
 
@@ -453,60 +454,63 @@ router.delete('/:id', authenticate, authorize('admin', 'base_commander'), async 
 // Helper function to execute a transfer by updating asset quantities
 async function executeTransfer(transfer: any) {
   try {
-    // Start transaction
-    await query('BEGIN');
+    // Start transaction using sql.begin()
+    await sql.begin(async (sql) => {
+      // Update source base inventory (reduce quantities)
+      const sourceAssetResult = await sql.unsafe(
+        'SELECT * FROM assets WHERE name = $1 AND base_id = $2',
+        [transfer.asset_name, transfer.from_base_id]
+      );
 
-    // Update source base inventory (reduce quantities)
-    const sourceAssetResult = await query(
-      'SELECT * FROM assets WHERE name = $1 AND base_id = $2',
-      [transfer.asset_name, transfer.from_base_id]
-    );
+      if (sourceAssetResult.length === 0) {
+        throw new Error('Source asset not found');
+      }
 
-    if (sourceAssetResult.rows.length === 0) {
-      throw new Error('Source asset not found');
-    }
+      const sourceAsset = sourceAssetResult[0];
+      if (!sourceAsset) {
+        throw new Error('Source asset not found');
+      }
+      const newSourceQuantity = sourceAsset['quantity'] - transfer.quantity;
+      const newSourceAvailableQuantity = sourceAsset['available_quantity'] - transfer.quantity;
 
-    const sourceAsset = sourceAssetResult.rows[0];
-    const newSourceQuantity = sourceAsset.quantity - transfer.quantity;
-    const newSourceAvailableQuantity = sourceAsset.available_quantity - transfer.quantity;
+      if (newSourceAvailableQuantity < 0) {
+        throw new Error('Insufficient available quantity for transfer');
+      }
 
-    if (newSourceAvailableQuantity < 0) {
-      throw new Error('Insufficient available quantity for transfer');
-    }
-
-    await query(`
-      UPDATE assets 
-      SET quantity = $1, available_quantity = $2
-      WHERE id = $3
-    `, [newSourceQuantity, newSourceAvailableQuantity, sourceAsset.id]);
-
-    // Update destination base inventory (add quantities)
-    const destAssetResult = await query(
-      'SELECT * FROM assets WHERE name = $1 AND base_id = $2',
-      [transfer.asset_name, transfer.to_base_id]
-    );
-
-    if (destAssetResult.rows.length > 0) {
-      // Update existing inventory
-      const destAsset = destAssetResult.rows[0];
-      const newDestQuantity = destAsset.quantity + transfer.quantity;
-      const newDestAvailableQuantity = destAsset.available_quantity + transfer.quantity;
-
-      await query(`
+      await sql.unsafe(`
         UPDATE assets 
         SET quantity = $1, available_quantity = $2
         WHERE id = $3
-      `, [newDestQuantity, newDestAvailableQuantity, destAsset.id]);
-    } else {
-      // Create new inventory entry
-      await query(`
-        INSERT INTO assets (name, base_id, quantity, available_quantity, assigned_quantity)
-        VALUES ($1, $2, $3, $4, $5)
-      `, [transfer.asset_name, transfer.to_base_id, transfer.quantity, transfer.quantity, 0]);
-    }
+      `, [newSourceQuantity, newSourceAvailableQuantity, sourceAsset['id']]);
 
-    // Commit transaction
-    await query('COMMIT');
+      // Update destination base inventory (add quantities)
+      const destAssetResult = await sql.unsafe(
+        'SELECT * FROM assets WHERE name = $1 AND base_id = $2',
+        [transfer.asset_name, transfer.to_base_id]
+      );
+
+      if (destAssetResult.length > 0) {
+        // Update existing inventory
+        const destAsset = destAssetResult[0];
+        if (!destAsset) {
+          throw new Error('Destination asset not found');
+        }
+        const newDestQuantity = destAsset['quantity'] + transfer.quantity;
+        const newDestAvailableQuantity = destAsset['available_quantity'] + transfer.quantity;
+
+        await sql.unsafe(`
+          UPDATE assets 
+          SET quantity = $1, available_quantity = $2
+          WHERE id = $3
+        `, [newDestQuantity, newDestAvailableQuantity, destAsset['id']]);
+      } else {
+        // Create new inventory entry
+        await sql.unsafe(`
+          INSERT INTO assets (name, base_id, quantity, available_quantity, assigned_quantity)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [transfer.asset_name, transfer.to_base_id, transfer.quantity, transfer.quantity, 0]);
+      }
+    });
 
     logger.info({
       action: 'TRANSFER_EXECUTED',
@@ -518,8 +522,6 @@ async function executeTransfer(transfer: any) {
       quantity: transfer.quantity
     });
   } catch (error) {
-    // Rollback transaction
-    await query('ROLLBACK');
     logger.error('Error executing transfer:', error);
     throw error;
   }

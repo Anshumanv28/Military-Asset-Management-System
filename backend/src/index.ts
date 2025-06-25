@@ -57,6 +57,16 @@ app.get('/health', (_req, res) => {
   });
 });
 
+// API health check endpoint for deployment platforms
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    environment: process.env['NODE_ENV'],
+    version: process.env['API_VERSION'] || 'v1'
+  });
+});
+
 // Import routes
 import authRoutes from './routes/auth';
 import dashboardRoutes from './routes/dashboard';
@@ -132,6 +142,9 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-startServer();
+// Only start the server if not in serverless environment
+if (process.env['NODE_ENV'] !== 'production' || !process.env['VERCEL']) {
+  startServer();
+}
 
 export default app; 

@@ -17,16 +17,16 @@ import { useAuth } from '../contexts/AuthContext.tsx';
 
 const adminCredentials = { email: 'admin@military.gov', password: 'admin123', role: 'Admin' };
 const commanderCredentials = [
-  { username: 'price', email: 'price@military.gov', password: 'password123', role: 'Base Commander' },
-  { username: 'soap', email: 'soap@military.gov', password: 'password123', role: 'Base Commander' },
-  { username: 'ghost', email: 'ghost@military.gov', password: 'password123', role: 'Base Commander' },
-  { username: 'gaz', email: 'gaz@military.gov', password: 'password123', role: 'Base Commander' },
+  { username: 'price', email: 'price@tf141.gov', password: 'password123', role: 'Base Commander', base: 'Task Force 141' },
+  { username: 'graves', email: 'graves@shadow.gov', password: 'password123', role: 'Base Commander', base: 'Shadow Company' },
+  { username: 'vargas', email: 'vargas@vaqueros.gov', password: 'password123', role: 'Base Commander', base: 'Los Vaqueros' },
+  { username: 'woods', email: 'woods@kortac.gov', password: 'password123', role: 'Base Commander', base: 'KorTac' },
 ];
 const logisticsCredentials = [
-  { username: 'laswell', email: 'laswell@military.gov', password: 'password123', role: 'Logistics Officer' },
-  { username: 'farah', email: 'farah@military.gov', password: 'password123', role: 'Logistics Officer' },
-  { username: 'alex', email: 'alex@military.gov', password: 'password123', role: 'Logistics Officer' },
-  { username: 'nikto', email: 'nikto@military.gov', password: 'password123', role: 'Logistics Officer' },
+  { username: 'laswell', email: 'laswell@tf141.gov', password: 'password123', role: 'Logistics Officer', base: 'Task Force 141' },
+  { username: 'keller', email: 'keller@shadow.gov', password: 'password123', role: 'Logistics Officer', base: 'Shadow Company' },
+  { username: 'santiago', email: 'santiago@vaqueros.gov', password: 'password123', role: 'Logistics Officer', base: 'Los Vaqueros' },
+  { username: 'mason', email: 'mason@kortac.gov', password: 'password123', role: 'Logistics Officer', base: 'KorTac' },
 ];
 
 const Login: React.FC = () => {
@@ -128,13 +128,13 @@ const Login: React.FC = () => {
                 <Typography variant="subtitle1">Base Commanders:</Typography>
                 <ul>
                   {commanderCredentials.map((cred, idx) => (
-                    <li key={idx}><b>{cred.username}</b>: {cred.email} / {cred.password} ({cred.role})</li>
+                    <li key={idx}><b>{cred.username}</b> ({cred.base}): {cred.email} / {cred.password}</li>
                   ))}
                 </ul>
                 <Typography variant="subtitle1">Logistics Officers:</Typography>
                 <ul>
                   {logisticsCredentials.map((cred, idx) => (
-                    <li key={idx}><b>{cred.username}</b>: {cred.email} / {cred.password} ({cred.role})</li>
+                    <li key={idx}><b>{cred.username}</b> ({cred.base}): {cred.email} / {cred.password}</li>
                   ))}
                 </ul>
               </Paper>

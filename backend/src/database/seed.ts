@@ -9,7 +9,7 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 import bcrypt from 'bcryptjs';
-import { query, testConnection } from './connection';
+import sql, { testConnection } from './connection';
 import { logger } from '../utils/logger';
 
 const seedDatabase = async () => {
@@ -21,9 +21,9 @@ const seedDatabase = async () => {
     const adminPassword = await bcrypt.hash('admin123', 10);
     
     try {
-      await query(`
+      await sql`
         INSERT INTO users (username, email, password_hash, first_name, last_name, role)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES (${ 'admin' }, ${ 'admin@military.gov' }, ${ adminPassword }, ${ 'System' }, ${ 'Administrator' }, ${ 'admin' })
         ON CONFLICT (username) DO UPDATE SET 
           email = EXCLUDED.email,
           password_hash = EXCLUDED.password_hash,
@@ -31,7 +31,7 @@ const seedDatabase = async () => {
           last_name = EXCLUDED.last_name,
           role = EXCLUDED.role
         RETURNING id
-      `, ['admin', 'admin@military.gov', adminPassword, 'System', 'Administrator', 'admin']);
+      `;
     } catch (error) {
       // Admin user already exists, continue
     }
@@ -45,14 +45,14 @@ const seedDatabase = async () => {
 
     const baseIds = [];
     for (const base of bases) {
-      const result = await query(`
+      const result = await sql`
         INSERT INTO bases (name, code, location)
-        VALUES ($1, $2, $3)
+        VALUES (${ base.name }, ${ base.code }, ${ base.location })
         ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, location = EXCLUDED.location
         RETURNING id
-      `, [base.name, base.code, base.location]);
-      
-      baseIds.push(result.rows[0].id);
+      `;
+      if (!result[0] || typeof result[0]['id'] === 'undefined') throw new Error('Failed to insert or fetch base id');
+      baseIds.push(result[0]['id']);
     }
 
     const commanders = [
@@ -74,9 +74,9 @@ const seedDatabase = async () => {
 
     for (const user of allUsers) {
       const password = await bcrypt.hash('password123', 10);
-      const result = await query(`
+      const result = await sql`
         INSERT INTO users (username, email, password_hash, first_name, last_name, role, base_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        VALUES (${ user.username }, ${ user.email }, ${ password }, ${ user.first_name }, ${ user.last_name }, ${ user.role }, ${ user.base_id })
         ON CONFLICT (username) DO UPDATE SET 
           email = EXCLUDED.email, 
           password_hash = EXCLUDED.password_hash,
@@ -85,15 +85,15 @@ const seedDatabase = async () => {
           role = EXCLUDED.role,
           base_id = EXCLUDED.base_id
         RETURNING id
-      `, [user.username, user.email, password, user.first_name, user.last_name, user.role, user.base_id]);
-      
-      userIds.push(result.rows[0].id);
+      `;
+      if (!result[0] || typeof result[0]['id'] === 'undefined') throw new Error('Failed to insert or fetch user id');
+      userIds.push(result[0]['id']);
     }
 
     for (let i = 0; i < baseIds.length; i++) {
-      await query(`
-        UPDATE bases SET commander_id = $1 WHERE id = $2
-      `, [userIds[i], baseIds[i]]);
+      await sql`
+        UPDATE bases SET commander_id = ${ userIds[i] } WHERE id = ${ baseIds[i] }
+      `;
     }
 
     const personnel = [
@@ -127,14 +127,14 @@ const seedDatabase = async () => {
     ];
 
     for (const person of personnel) {
-      await query(`
+      await sql`
         INSERT INTO personnel (first_name, last_name, rank, base_id, email, department)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        VALUES (${ person.first_name }, ${ person.last_name }, ${ person.rank }, ${ person.base_id }, ${ person.email }, ${ person.department })
         ON CONFLICT (first_name, last_name, email) DO UPDATE SET 
           rank = EXCLUDED.rank,
           base_id = EXCLUDED.base_id,
           department = EXCLUDED.department
-      `, [person.first_name, person.last_name, person.rank, person.base_id, person.email, person.department]);
+      `;
     }
 
     // Define assets with names directly (no asset_types table needed)
@@ -202,14 +202,14 @@ const seedDatabase = async () => {
 
     for (const asset of initialAssets) {
       if (asset.name && asset.base_id) {
-        await query(`
+        await sql`
           INSERT INTO assets (name, base_id, quantity, available_quantity, assigned_quantity)
-          VALUES ($1, $2, $3, $4, $5)
+          VALUES (${ asset.name }, ${ asset.base_id }, ${ asset.quantity }, ${ asset.available_quantity }, ${ asset.assigned_quantity })
           ON CONFLICT (name, base_id) DO UPDATE SET 
             quantity = EXCLUDED.quantity,
             available_quantity = EXCLUDED.available_quantity,
             assigned_quantity = EXCLUDED.assigned_quantity
-        `, [asset.name, asset.base_id, asset.quantity, asset.available_quantity, asset.assigned_quantity]);
+        `;
       }
     }
 

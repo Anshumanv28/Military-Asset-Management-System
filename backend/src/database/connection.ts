@@ -1,29 +1,10 @@
-import { Pool, PoolClient } from 'pg';
-import dotenv from 'dotenv';
+import sql from './db';
 import { logger } from '../utils/logger';
-
-dotenv.config();
-
-const pool = new Pool({
-  connectionString: process.env['DATABASE_URL'],
-  max: 20, // Maximum number of clients in the pool
-  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection could not be established
-  ssl: process.env['NODE_ENV'] === 'production' ? { rejectUnauthorized: false } : false,
-});
-
-// Handle pool errors
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  process.exit(-1);
-});
 
 // Test database connection
 export const testConnection = async (): Promise<void> => {
   try {
-    const client = await pool.connect();
-    await client.query('SELECT NOW()');
-    client.release();
+    await sql`SELECT 1`;
     logger.info('✅ Database connection successful');
   } catch (error) {
     logger.error('❌ Database connection failed:', error);
@@ -31,28 +12,24 @@ export const testConnection = async (): Promise<void> => {
   }
 };
 
-// Execute a query
+// Execute a query with $1, $2, ... placeholders using sql.unsafe with positional parameters
 export const query = async (text: string, params?: any[]): Promise<any> => {
   const start = Date.now();
   try {
-    const res = await pool.query(text, params);
+    let res;
+    if (params && params.length > 0) {
+      // Use sql.unsafe with the query text and parameters as an array
+      res = await sql.unsafe(text, params);
+    } else {
+      res = await sql.unsafe(text);
+    }
     const duration = Date.now() - start;
     logger.debug(`Executed query in ${duration}ms: ${text.substring(0, 100)}...`);
-    return res;
+    return { rows: res };
   } catch (error) {
     logger.error('Query error:', error);
     throw error;
   }
 };
 
-// Get a client from the pool
-export const getClient = async (): Promise<PoolClient> => {
-  return await pool.connect();
-};
-
-// Close the pool
-export const closePool = async (): Promise<void> => {
-  await pool.end();
-};
-
-export default pool; 
+export default sql; 

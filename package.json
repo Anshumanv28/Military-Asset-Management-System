@@ -1,0 +1,22 @@
+{
+  "name": "military-assets-database-seeder",
+  "version": "1.0.0",
+  "description": "Database seeder for Military Asset Management System",
+  "main": "seed-database.js",
+  "scripts": {
+    "seed": "node seed-database.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "pg": "^8.11.3",
+    "vercel": "^44.2.2"
+  },
+  "keywords": [
+    "database",
+    "seeder",
+    "military",
+    "assets"
+  ],
+  "author": "Military Asset Management Team",
+  "license": "MIT"
+}

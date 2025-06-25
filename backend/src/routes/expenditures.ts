@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { query } from '../database/connection';
 import { authenticate, authorize } from '../middleware/auth';
 import { logger } from '../utils/logger';
+import sql from '../database/db';
 
 const router = Router();
 
@@ -137,17 +138,15 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
       });
     }
 
-    // Start transaction
-    await query('BEGIN');
-
-    try {
+    // Start transaction using sql.begin()
+    const transaction = await sql.begin(async (sql) => {
       // Create expenditure record
       const createQuery = `
         INSERT INTO expenditures (asset_name, base_id, quantity, expenditure_date, reason, notes, created_by)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
       `;
-      const result = await query(createQuery, [
+      const result = await sql.unsafe(createQuery, [
         asset_name,
         base_id,
         quantity,
@@ -157,13 +156,13 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
         req.user!.user_id
       ]);
 
-      const newExpenditure = result.rows[0];
+      const newExpenditure = result[0];
 
       // Update asset quantities - reduce from inventory
       const newQuantity = asset.quantity - quantity;
       const newAvailableQuantity = asset.available_quantity - quantity;
 
-      await query(`
+      await sql.unsafe(`
         UPDATE assets 
         SET quantity = $1, available_quantity = $2
         WHERE asset_name = $3 AND base_id = $4
@@ -177,33 +176,28 @@ router.post('/', authenticate, authorize('admin', 'base_commander', 'logistics_o
         newStatus = 'low_stock';
       }
 
-      await query(`
+      await sql.unsafe(`
         UPDATE assets 
         SET status = $1
         WHERE asset_name = $2 AND base_id = $3
       `, [newStatus, asset_name, base_id]);
 
-      // Commit transaction
-      await query('COMMIT');
+      return newExpenditure;
+    });
 
-      // Log expenditure creation
-      logger.info({
-        action: 'EXPENDITURE_CREATED',
-        user_id: req.user!.user_id,
-        expenditure_id: newExpenditure.id,
-        asset_name,
-        base_id,
-        quantity,
-        reason,
-        remaining_quantity: newQuantity
-      });
+    // Log expenditure creation
+    logger.info({
+      action: 'EXPENDITURE_CREATED',
+      user_id: req.user!.user_id,
+      expenditure_id: transaction?.['id'],
+      asset_name,
+      base_id,
+      quantity,
+      reason,
+      remaining_quantity: asset.quantity - quantity
+    });
 
-      return res.status(201).json({ success: true, data: newExpenditure });
-    } catch (error) {
-      // Rollback transaction
-      await query('ROLLBACK');
-      throw error;
-    }
+    return res.status(201).json({ success: true, data: transaction });
   } catch (error) {
     logger.error('Create expenditure error:', error);
     return res.status(500).json({ success: false, error: 'Server error' });
@@ -299,7 +293,7 @@ router.put('/:id', authenticate, authorize('admin', 'base_commander'), async (re
       quantity,
       expenditure_date,
       reason,
-      notes,
+      notes || null,
       id
     ]);
 
@@ -346,66 +340,59 @@ router.delete('/:id', authenticate, authorize('admin'), async (req: Request, res
 
     const expenditure = expenditureResult.rows[0];
 
-    // Start transaction
-    await query('BEGIN');
-
-    try {
+    // Start transaction using sql.begin()
+    await sql.begin(async (sql) => {
       // Restore asset quantities - use 'name' column for assets table
-      const assetResult = await query(
+      const assetResult = await sql.unsafe(
         'SELECT quantity, available_quantity FROM assets WHERE name = $1 AND base_id = $2',
         [expenditure.asset_name, expenditure.base_id]
       );
 
-      if (assetResult.rows.length > 0) {
-        const asset = assetResult.rows[0];
-        const newQuantity = asset.quantity + expenditure.quantity;
-        const newAvailableQuantity = asset.available_quantity + expenditure.quantity;
+      if (assetResult.length > 0) {
+        const asset = assetResult[0];
+        if (asset) {
+          const newQuantity = asset['quantity'] + expenditure.quantity;
+          const newAvailableQuantity = asset['available_quantity'] + expenditure.quantity;
 
-        await query(`
-          UPDATE assets 
-          SET quantity = $1, available_quantity = $2
-          WHERE name = $3 AND base_id = $4
-        `, [newQuantity, newAvailableQuantity, expenditure.asset_name, expenditure.base_id]);
+          await sql.unsafe(`
+            UPDATE assets 
+            SET quantity = $1, available_quantity = $2
+            WHERE name = $3 AND base_id = $4
+          `, [newQuantity, newAvailableQuantity, expenditure.asset_name, expenditure.base_id]);
 
-        // Update asset status
-        let newStatus = 'available';
-        if (newQuantity === 0) {
-          newStatus = 'out_of_stock';
-        } else if (newAvailableQuantity === 0) {
-          newStatus = 'low_stock';
+          // Update asset status
+          let newStatus = 'available';
+          if (newQuantity === 0) {
+            newStatus = 'out_of_stock';
+          } else if (newAvailableQuantity === 0) {
+            newStatus = 'low_stock';
+          }
+
+          await sql.unsafe(`
+            UPDATE assets 
+            SET status = $1
+            WHERE name = $2 AND base_id = $3
+          `, [newStatus, expenditure.asset_name, expenditure.base_id]);
         }
-
-        await query(`
-          UPDATE assets 
-          SET status = $1
-          WHERE name = $2 AND base_id = $3
-        `, [newStatus, expenditure.asset_name, expenditure.base_id]);
       }
 
       // Delete expenditure
-      await query('DELETE FROM expenditures WHERE id = $1', [id]);
+      await sql.unsafe('DELETE FROM expenditures WHERE id = $1', [id as string]);
+    });
 
-      // Commit transaction
-      await query('COMMIT');
+    // Log expenditure deletion
+    logger.info({
+      action: 'EXPENDITURE_DELETED',
+      user_id: req.user!.user_id,
+      expenditure_id: id,
+      asset_name: expenditure.asset_name,
+      quantity: expenditure.quantity
+    });
 
-      // Log expenditure deletion
-      logger.info({
-        action: 'EXPENDITURE_DELETED',
-        user_id: req.user!.user_id,
-        expenditure_id: id,
-        asset_name: expenditure.asset_name,
-        quantity: expenditure.quantity
-      });
-
-      return res.json({
-        success: true,
-        message: 'Expenditure deleted successfully'
-      });
-    } catch (error) {
-      // Rollback transaction
-      await query('ROLLBACK');
-      throw error;
-    }
+    return res.json({
+      success: true,
+      message: 'Expenditure deleted successfully'
+    });
   } catch (error) {
     logger.error('Delete expenditure error:', error);
     return res.status(500).json({ success: false, error: 'Server error' });

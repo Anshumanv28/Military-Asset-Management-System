@@ -16,11 +16,12 @@ A comprehensive asset management system designed for military organizations to t
 
 ### Prerequisites
 
-- Docker and Docker Compose
 - Node.js 18+ (for development)
-- PostgreSQL 15+
+- PostgreSQL database (Supabase, Railway, or similar)
 
 ### Production Deployment
+
+The application is designed to be deployed on Vercel with both frontend and backend on the same platform.
 
 1. **Clone the repository**
    ```bash
@@ -28,27 +29,19 @@ A comprehensive asset management system designed for military organizations to t
    cd Military-Asset-Management-System
    ```
 
-2. **Configure environment variables**
-   ```bash
-   # Backend
-   cp backend/env.example backend/.env
-   # Edit backend/.env with your production values
-   
-   # Frontend
-   cp frontend/env.example frontend/.env
-   # Edit frontend/.env with your production values
-   ```
+2. **Set up database**
+   - Create a PostgreSQL database (Supabase recommended)
+   - Run the schema from `backend/src/database/schema.sql`
 
-3. **Deploy with Docker**
-   ```bash
-   chmod +x deploy.sh
-   ./deploy.sh
-   ```
+3. **Deploy to Vercel**
+   - Connect your GitHub repository to Vercel
+   - Configure environment variables (see DEPLOYMENT_GUIDE.md)
+   - Deploy automatically
 
 4. **Access the application**
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:3001
-   - Health Check: http://localhost:3001/health
+   - Your application will be available at `https://your-project.vercel.app`
+   - API endpoints: `https://your-project.vercel.app/api/*`
+   - Health Check: `https://your-project.vercel.app/api/health`
 
 ### Development Setup
 
@@ -63,7 +56,18 @@ A comprehensive asset management system designed for military organizations to t
    npm install
    ```
 
-2. **Start development servers**
+2. **Set up environment variables**
+   ```bash
+   # Backend
+   cp backend/.env.example backend/.env
+   # Edit backend/.env with your database connection
+   
+   # Frontend
+   cp frontend/.env.example frontend/.env
+   # Edit frontend/.env with your API URL
+   ```
+
+3. **Start development servers**
    ```bash
    # Backend (Terminal 1)
    cd backend
@@ -80,7 +84,7 @@ A comprehensive asset management system designed for military organizations to t
 - **Backend**: Node.js with Express, TypeScript
 - **Database**: PostgreSQL
 - **Authentication**: JWT-based
-- **Deployment**: Docker containers
+- **Deployment**: Vercel (Frontend + Backend serverless functions)
 
 ## API Documentation
 
@@ -101,6 +105,10 @@ The API provides endpoints for:
 - CORS protection
 - Input validation
 - SQL injection prevention
+
+## Deployment
+
+For detailed deployment instructions, see [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md).
 
 ## License
 
