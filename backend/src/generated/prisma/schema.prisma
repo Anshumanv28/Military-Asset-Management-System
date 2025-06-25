@@ -1,0 +1,200 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../src/generated/prisma"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model assets {
+  id                 String      @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name               String      @db.VarChar(100)
+  base_id            String      @db.Uuid
+  quantity           Int         @default(0)
+  available_quantity Int         @default(0)
+  assigned_quantity  Int         @default(0)
+  status             String      @default("available") @db.VarChar(20)
+  created_at         DateTime?   @default(now()) @db.Timestamp(6)
+  bases              bases       @relation(fields: [base_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchases          purchases[]
+
+  @@unique([name, base_id])
+  @@index([name, base_id, status], map: "idx_assets_name_base_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model assignments {
+  id                String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  asset_name        String    @db.VarChar(100)
+  assigned_to       String    @db.Uuid
+  assigned_by       String    @db.Uuid
+  base_id           String    @db.Uuid
+  quantity          Int       @default(1)
+  expended_quantity Int       @default(0)
+  assignment_date   DateTime  @db.Date
+  status            String    @default("active") @db.VarChar(20)
+  notes             String?
+  created_at        DateTime? @default(now()) @db.Timestamp(6)
+  users             users     @relation(fields: [assigned_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  personnel         personnel @relation(fields: [assigned_to], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bases             bases     @relation(fields: [base_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([asset_name, assigned_to, base_id], map: "idx_assignments_name_person_base")
+  @@index([status, assigned_by], map: "idx_assignments_status_created")
+}
+
+model audit_logs {
+  id         String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id    String?   @db.Uuid
+  action     String    @db.VarChar(50)
+  table_name String    @db.VarChar(50)
+  record_id  String?   @db.Uuid
+  old_values Json?
+  new_values Json?
+  ip_address String?   @db.Inet
+  user_agent String?
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+  users      users?    @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([created_at], map: "idx_audit_created")
+  @@index([user_id, action, table_name], map: "idx_audit_user_action_table")
+}
+
+model bases {
+  id                                      String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  name                                    String         @db.VarChar(255)
+  code                                    String         @unique @db.VarChar(10)
+  location                                String         @db.VarChar(500)
+  commander_id                            String?        @db.Uuid
+  is_active                               Boolean?       @default(true)
+  created_at                              DateTime?      @default(now()) @db.Timestamp(6)
+  assets                                  assets[]
+  assignments                             assignments[]
+  users_bases_commander_idTousers         users?         @relation("bases_commander_idTousers", fields: [commander_id], references: [id], onUpdate: NoAction, map: "fk_bases_commander_id")
+  expenditures                            expenditures[]
+  personnel                               personnel[]
+  purchases                               purchases[]
+  transfers_transfers_from_base_idTobases transfers[]    @relation("transfers_from_base_idTobases")
+  transfers_transfers_to_base_idTobases   transfers[]    @relation("transfers_to_base_idTobases")
+  users_users_base_idTobases              users[]        @relation("users_base_idTobases")
+
+  @@index([code, commander_id], map: "idx_bases_code_commander")
+}
+
+model expenditures {
+  id                                      String     @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  asset_name                              String     @db.VarChar(100)
+  base_id                                 String     @db.Uuid
+  personnel_id                            String?    @db.Uuid
+  quantity                                Int
+  expenditure_date                        DateTime   @db.Date
+  reason                                  String     @db.VarChar(255)
+  authorized_by                           String?    @db.Uuid
+  notes                                   String?
+  created_by                              String     @db.Uuid
+  created_at                              DateTime?  @default(now()) @db.Timestamp(6)
+  users_expenditures_authorized_byTousers users?     @relation("expenditures_authorized_byTousers", fields: [authorized_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bases                                   bases      @relation(fields: [base_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_expenditures_created_byTousers    users      @relation("expenditures_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  personnel                               personnel? @relation(fields: [personnel_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([base_id, asset_name, expenditure_date], map: "idx_expenditures_base_name_date")
+}
+
+model personnel {
+  id           String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  first_name   String         @db.VarChar(100)
+  last_name    String         @db.VarChar(100)
+  rank         String         @db.VarChar(50)
+  base_id      String         @db.Uuid
+  email        String?        @db.VarChar(255)
+  phone        String?        @db.VarChar(50)
+  department   String?        @db.VarChar(100)
+  is_active    Boolean?       @default(true)
+  created_at   DateTime?      @default(now()) @db.Timestamp(6)
+  assignments  assignments[]
+  expenditures expenditures[]
+  bases        bases          @relation(fields: [base_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([first_name, last_name, email])
+  @@index([is_active], map: "idx_personnel_active")
+  @@index([first_name, last_name, base_id], map: "idx_personnel_name_base")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model purchases {
+  id                                 String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  asset_id                           String    @db.Uuid
+  base_id                            String    @db.Uuid
+  quantity                           Int
+  supplier                           String?   @db.VarChar(255)
+  purchase_date                      DateTime  @db.Date
+  status                             String    @default("pending") @db.VarChar(20)
+  approved_by                        String?   @db.Uuid
+  approved_at                        DateTime? @db.Timestamp(6)
+  notes                              String?
+  created_by                         String    @db.Uuid
+  created_at                         DateTime? @default(now()) @db.Timestamp(6)
+  users_purchases_approved_byTousers users?    @relation("purchases_approved_byTousers", fields: [approved_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  assets                             assets    @relation(fields: [asset_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bases                              bases     @relation(fields: [base_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_purchases_created_byTousers  users     @relation("purchases_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([base_id, asset_id], map: "idx_purchases_base_name_date")
+  @@index([created_by, status], map: "idx_purchases_created_status")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model transfers {
+  id                                  String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  transfer_number                     String    @unique @db.VarChar(50)
+  from_base_id                        String    @db.Uuid
+  to_base_id                          String    @db.Uuid
+  asset_name                          String    @db.VarChar(100)
+  quantity                            Int
+  transfer_date                       DateTime  @db.Date
+  status                              String    @default("pending") @db.VarChar(20)
+  approved_by                         String?   @db.Uuid
+  approved_at                         DateTime? @db.Timestamp(6)
+  notes                               String?
+  created_by                          String    @db.Uuid
+  created_at                          DateTime? @default(now()) @db.Timestamp(6)
+  users_transfers_approved_byTousers  users?    @relation("transfers_approved_byTousers", fields: [approved_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_transfers_created_byTousers   users     @relation("transfers_created_byTousers", fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bases_transfers_from_base_idTobases bases     @relation("transfers_from_base_idTobases", fields: [from_base_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bases_transfers_to_base_idTobases   bases     @relation("transfers_to_base_idTobases", fields: [to_base_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([from_base_id, to_base_id, asset_name, transfer_date], map: "idx_transfers_bases_name_date")
+  @@index([status, created_by], map: "idx_transfers_status_created")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model users {
+  id                                             String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  username                                       String         @unique @db.VarChar(50)
+  email                                          String         @unique @db.VarChar(255)
+  password_hash                                  String         @db.VarChar(255)
+  first_name                                     String         @db.VarChar(100)
+  last_name                                      String         @db.VarChar(100)
+  role                                           String         @db.VarChar(20)
+  base_id                                        String?        @db.Uuid
+  is_active                                      Boolean?       @default(true)
+  created_at                                     DateTime?      @default(now()) @db.Timestamp(6)
+  assignments                                    assignments[]
+  audit_logs                                     audit_logs[]
+  bases_bases_commander_idTousers                bases[]        @relation("bases_commander_idTousers")
+  expenditures_expenditures_authorized_byTousers expenditures[] @relation("expenditures_authorized_byTousers")
+  expenditures_expenditures_created_byTousers    expenditures[] @relation("expenditures_created_byTousers")
+  purchases_purchases_approved_byTousers         purchases[]    @relation("purchases_approved_byTousers")
+  purchases_purchases_created_byTousers          purchases[]    @relation("purchases_created_byTousers")
+  transfers_transfers_approved_byTousers         transfers[]    @relation("transfers_approved_byTousers")
+  transfers_transfers_created_byTousers          transfers[]    @relation("transfers_created_byTousers")
+  bases_users_base_idTobases                     bases?         @relation("users_base_idTobases", fields: [base_id], references: [id], onUpdate: NoAction)
+
+  @@index([role, base_id], map: "idx_users_role_base")
+  @@index([username, email], map: "idx_users_username_email")
+}
